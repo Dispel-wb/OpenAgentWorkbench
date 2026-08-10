@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Agent 中文工作台</title>
+  <link rel="stylesheet" href="/static/styles.css?v=6.3.0">
+  <link rel="stylesheet" href="/static/vendor/xterm.css?v=6.3.0">
+</head>
+<body>
+  <div id="app" v-cloak>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark"><span v-if="useGlyphAgent" class="codex-agent-mark">◇</span><img v-else :src="agentImage" alt="Agent 图标"></div>
+          <div><strong>{{agentTitle}}</strong><span>{{isOpenSource?'Open-source Edition':'本地自用版'}} · Desktop</span></div>
+        </div>
+
+        <button class="primary new-chat" @click="newSession"><span>＋</span> 新建会话 <kbd>Ctrl N</kbd></button>
+        <div class="section-label"><span>对话</span><button class="icon-button" title="归档当前会话" @click="archiveSession">▾</button></div>
+        <div class="session-list">
+          <div v-for="group in sessionGroups" :key="group.label" class="session-group">
+            <div class="session-group-label">{{group.label}}</div>
+            <div v-for="session in group.items" :key="session.id" class="session-entry" :class="{active: session.id === activeSessionId}">
+              <button class="session-item" @click="activateSession(session.id)" :title="sessionDisplayTitle(session.title)"><span class="session-glyph">◇</span><span class="session-title">{{ sessionDisplayTitle(session.title) }}</span><small>{{ formatTime(session.updatedAt) }}</small></button>
+              <button class="session-delete" :disabled="busy" title="归档这个会话" @click.stop="archiveSessionById(session.id)">▾</button>
+            </div>
+          </div>
+          <div v-if="!sortedSessions.length" class="empty-list">还没有会话</div>
+        </div>
+
+        <div class="sidebar-actions">
+          <button @click="openInspector('files')" title="项目、Git、搜索、扩展与诊断"><span class="action-icon">⌘</span><span>开发工作台</span></button>
+          <button @click="openSettings('api')" title="API 设置与归档聊天"><span class="action-icon">⚙</span><span>设置</span><em>{{ archivedSessions.length||'' }}</em></button>
+          <button :disabled="!messages.length" @click="exportSessionMarkdown"><span class="action-icon">⇩</span><span>导出当前会话</span></button>
+          <button :disabled="!selectedProvider?.image?.enabled" @click="view='image'"><span class="action-icon">▧</span><span>图像生成</span><em v-if="selectedProvider?.image?.enabled">可用</em></button>
+          <button @click="openTarget('workspace')"><span class="action-icon">▣</span><span>打开工作区</span></button>
+          <button @click="openTarget('terminal')"><span class="action-icon">〉_</span><span>完整终端模式</span></button>
+          <div class="workspace-path"><span>WORKSPACE</span><code>{{ workspace }}</code></div>
+        </div>
+      </aside>
+
+      <main class="main" :class="{'inspector-open':inspector.open}">
+        <header class="topbar">
+          <div class="topbar-copy">
+            <button v-if="view==='image'" class="back-button" @click="view='chat'">←</button>
+             <div><h1>{{ view === 'chat' ? '中文对话工作台' : '图像生成工作室' }}</h1><p>{{ view === 'chat' ? (isOpenSource?'Agent runtime · 多 API capability router':'Claude Code 核心 · 多 API capability router') : '同一令牌，独立 Image capability' }}</p></div>
+          </div>
+          <div class="selectors">
+            <label><span>API 令牌</span><select v-model="settings.providerId" @change="providerChanged"><option v-for="p in providers" :value="p.id">{{p.name}}</option></select></label>
+            <label><span>{{view==='chat'?'文字模型':'生图模型'}}</span><select v-if="view==='chat'" v-model="settings.model" @change="modelChanged"><option v-for="m in textModels" :value="m">{{m}}</option></select><select v-else v-model="imageForm.model"><option v-for="m in imageModels" :value="m">{{m}}</option></select></label>
+            <label v-if="view==='chat'"><span>推理强度</span><select v-model="settings.effort" @change="saveSettings"><option value="high">High</option><option value="max">Max</option></select></label>
+            <label v-if="view==='chat'"><span>权限模式</span><select v-model="settings.permissionMode" @change="modelChanged"><option value="readonly">只读</option><option value="plan">规划</option><option value="manual">逐项询问</option><option value="scoped">限定工具</option><option value="edit">允许编辑</option><option value="agent">Agent（全盘）</option></select></label>
+          </div>
+          <div v-if="view==='chat'" class="workbench-tools"><button title="项目文件" @click="openInspector('files')">文件</button><button title="Git 变更" @click="openInspector('git')">Git</button><button title="搜索所有 Claude transcript" @click="openInspector('search')">搜索</button><button title="扩展与 Agent" @click="openInspector('extensions')">扩展</button><button title="更多工作台工具" @click="openInspector('usage')">工作台</button></div>
+        </header>
+
+        <template v-if="view==='chat'">
+          <section class="conversation" ref="conversation">
+            <div v-if="!messages.length" class="welcome">
+              <div class="welcome-heading"><div class="welcome-mascot"><span v-if="useGlyphAgent" class="codex-agent-mark large">◇</span><img v-else :src="agentImage" alt="Agent 图标"></div><div class="welcome-copy"><span class="eyebrow">{{agentTitle.toUpperCase()}}</span><h2>今天想一起完成什么？</h2><p>分析代码、修改文件、运行工具，或切换到 Image capability。</p></div></div>
+              <div class="starter-grid"><button @click="useStarter('分析当前工作区并给出简洁的项目概览')"><b>⌕</b><span>理解工作区<small>快速梳理结构与风险</small></span></button><button @click="useStarter('检查当前项目中最值得优先修复的问题')"><b>◇</b><span>检查问题<small>从关键路径开始</small></span></button><button @click="useStarter('帮我规划下一步开发工作，先不要修改文件')"><b>↗</b><span>制定计划<small>先规划，再执行</small></span></button></div>
+            </div>
+
+            <div v-if="hasOlderMessages" class="history-window-control"><button @click="showOlderMessages">显示更早的消息</button><span>当前仅渲染 {{messageWindowSize}} 条，完整记录仍保存在 Host</span></div>
+            <article v-for="message in renderedMessages" :key="message.id" class="message" :class="message.role">
+              <div class="avatar" v-if="message.role==='assistant'"><span v-if="useGlyphAgent" class="codex-agent-mark">◇</span><img v-else :src="agentImage" alt=""></div>
+              <div class="message-column">
+                <div class="message-head"><div class="speaker">{{message.role==='user'?`你${message.queueKind==='steer'?' · 优先转向':message.queueKind?' · 来自队列':''}`:message.role==='system'?'系统':agentLabel+' · '+(message.providerName||selectedProvider?.name||'API')}}</div><button class="message-delete" :disabled="busy||message.streaming" title="删除这条消息" @click="deleteMessage(message.id)">×</button></div>
+                <div class="message-body markdown-body" @click="handleMessageBodyClick" @contextmenu="openSelectionMenu(message,$event)"><span v-html="renderMarkdown(message.text)"></span><span v-if="message.streaming" class="stream-caret"></span></div>
+                <div v-if="message.attachments?.length" class="message-attachments">
+                  <button v-for="path in message.attachments" :key="path" class="message-file-card" :title="`打开原始文件：${path}`" @click="openLocalFile(path)">
+                    <span class="file-visual" :class="fileTypeClass(path)"><img v-if="filePreviews[path]" :src="filePreviews[path]" alt=""><i v-else>{{fileIcon(path)}}</i></span>
+                    <span class="file-copy"><b>{{attachmentName(path)}}</b><small>{{fileKind(path)}} · {{filePathHint(path)}}</small></span>
+                  </button>
+                </div>
+                <details v-for="flow in message.workflow||[]" :key="flow.id" class="workflow" :open="flow.open">
+                  <summary><span class="flow-state" :class="flow.state"></span><span>{{flow.title}}</span><small>{{flow.state==='running'?'运行中':flow.state==='waiting'?'等待结果':flow.state==='failed'?'失败':'已完成'}}</small><i>⌄</i></summary>
+                  <pre>{{flow.detail||'没有额外详情'}}</pre>
+                </details>
+                <section v-if="message.taskReview" class="task-review-card">
+                  <header><div><span>任务隔离</span><b>{{message.taskReview.kind==='git-worktree'?'Git worktree':'文件快照'}}</b></div><em :class="message.taskReview.state">{{message.taskReview.state==='applied'?'已应用':message.taskReview.state==='reverted'?'已撤销':'等待 Review'}}</em></header>
+                  <p>{{message.taskReview.kind==='git-worktree'?'Agent 的改动仍在独立 worktree；选择文件后再应用到原工作区。':'运行前已保存完整快照，可查看变更或一键恢复。'}}</p>
+                  <div class="task-change-list" v-if="message.taskReview.changes?.length"><label v-for="change in message.taskReview.changes" :key="change.path"><input v-if="message.taskReview.kind==='git-worktree'" type="checkbox" v-model="change.selected" :disabled="message.taskReview.state!=='isolated'"><i>{{change.state}}</i><code>{{change.path}}</code></label></div>
+                  <div v-else class="task-review-empty">没有检测到文件变更</div>
+                  <footer><button v-if="message.taskReview.kind==='git-worktree'" :disabled="message.taskReview.applying||message.taskReview.state!=='isolated'||!message.taskReview.changes?.length" @click="applyTaskChanges(message)">应用所选变更</button><button :disabled="message.taskReview.applying||message.taskReview.state!=='isolated'||!message.taskReview.changes?.length" @click="revertTaskChanges(message)">撤销任务变更</button></footer>
+                </section>
+                <section v-if="message.fallbackDecision?.candidates?.length" class="provider-fallback-card">
+                  <header><span>Provider 回退</span><b>需要你确认</b></header>
+                  <p>当前 Provider 请求失败。工作台不会擅自产生额外费用；可选择一个已配置的文字接口后重试。</p>
+                  <div><button v-for="candidate in message.fallbackDecision.candidates" :key="candidate.providerId" :disabled="busy" @click="retryWithProvider(candidate,message)"><b>{{candidate.name}}</b><small>{{candidate.models?.[0]||'未选择模型'}}</small></button></div>
+                </section>
+                <div v-if="message.usage" class="token-footnote"><span>Token</span><b>{{number(message.usage.input)}} input</b><b>＋ {{number(message.usage.output)}} output</b><strong>＝ {{number(message.usage.total)}} total</strong></div>
+                <div v-if="!message.streaming" class="message-actions">
+                  <button title="引用整条消息；框选内容后也可右键引用" @mousedown.prevent="quoteMessage(message,$event)">引用提问</button>
+                  <button v-if="canRegenerate(message)" title="重新生成这一轮回答，并保留两个版本" @click="regenerateMessage(message)">重新生成</button>
+                  <div v-if="message.variants?.length>1" class="variant-switcher" title="当前显示的回答将作为下一轮上下文"><button :disabled="busy||message.activeVariant<=0" @click="switchVariant(message,-1)">‹</button><span>{{Number(message.activeVariant||0)+1}} / {{message.variants.length}}</span><button :disabled="busy||message.activeVariant>=message.variants.length-1" @click="switchVariant(message,1)">›</button><em>作为上下文</em></div>
+                </div>
+              </div>
+            </article>
+            <div v-if="hasNewerMessages" class="history-window-control newer"><button @click="showNewerMessages">显示更新的消息</button></div>
+          </section>
+
+          <section class="composer-wrap">
+            <div v-if="queuedPrompts.length" class="prompt-queue"><div class="queue-head"><span>队列 · {{queuedPrompts.length}}</span><small>当前任务完成后依次处理</small><button v-if="!busy" @click="runNextQueued">继续队列</button></div><div class="queue-items"><div v-for="(item,index) in queuedPrompts" :key="item.id" class="queue-item" :class="{steer:item.kind==='steer'}"><i>{{item.kind==='steer'?'转向':index+1}}</i><span>{{item.text}}</span><button :disabled="item.kind==='steer'||steering" title="直接注入当前 Claude Code 进程，立即改变工作方向" @click="prioritizeQueued(item.id)">更改方向</button><button title="从队列移除" @click="removeQueued(item.id)">×</button></div></div></div>
+            <div class="composer" :class="{busy}">
+              <textarea v-model="prompt" :placeholder="busy?'当前任务运行中；输入下一条指令并按 Enter 加入队列…':'向 Claude Code 描述任务…'" @keydown="handleComposerKeydown"></textarea>
+              <div v-if="slashSuggestions.length" class="command-suggestions"><button v-for="name in slashSuggestions" :key="name" @click="useSlashCommand(name)"><b>/{{name}}</b><span>{{extensions.skills?.some(item=>item.name===name)?'Skill':'Claude Code 命令'}}</span></button></div>
+              <div v-else-if="fileSuggestions.length" class="command-suggestions file-suggestions"><button v-for="file in fileSuggestions" :key="file.path" @click="useFileSuggestion(file)"><b>@{{file.name}}</b><span>{{file.path}}</span></button></div>
+              <div v-if="attachments.length" class="attachment-strip">
+                <div class="attachment-list">
+                  <div v-for="path in attachments" :key="path" class="attachment-card" :title="path">
+                    <button class="attachment-open" title="打开原始文件" @click="openLocalFile(path)"><span class="file-visual" :class="fileTypeClass(path)"><img v-if="filePreviews[path]" :src="filePreviews[path]" alt=""><i v-else>{{fileIcon(path)}}</i></span><span class="file-copy"><b>{{attachmentName(path)}}</b><small>{{fileKind(path)}} · {{filePathHint(path)}}</small></span></button>
+                    <button class="attachment-remove" :disabled="busy" title="移除此文件" @click="removeAttachment(path)">×</button>
+                  </div>
+                </div>
+                <button class="clear-attachments" :disabled="busy" @click="clearAttachments">全部取消</button>
+              </div>
+              <div v-if="attachmentNotice" class="attachment-warning">{{attachmentNotice}}<button @click="attachmentNotice=''">×</button></div>
+              <div class="composer-footer"><div class="composer-hints"><button :disabled="choosingFiles||busy||!canAttachFiles" :title="canAttachFiles?`添加文件 · ${attachmentCapabilityLabel}`:'请先选择可用文字模型'" @click="chooseFiles">{{choosingFiles?'…':'＋'}}</button><span>{{busy?'Enter 加入队列 · Shift + Enter 换行':attachments.length ? `待发送 ${attachments.length} 个文件` : 'Enter 发送 · Shift + Enter 换行'}}</span><em :class="{visual:visualAttachmentsSupported}">{{attachmentCapabilityLabel}}</em></div><button v-if="busy&&!paused" class="stop pause" @click="pauseChat">暂停</button><button v-if="busy&&paused" class="stop pause" @click="resumeChat">继续</button><button v-if="busy" class="stop" @click="stopChat">停止</button><button v-if="busy" class="send queue-send" :disabled="!prompt.trim()" @click="enqueuePrompt">加入队列 <span>＋</span></button><button v-else class="send" :disabled="!prompt.trim()&&!attachments.length" @click="sendPrompt">发送 <span>↗</span></button></div>
+            </div>
+            <div class="statusline"><span :class="{live:busy}">● {{status}}</span><span>{{selectedProvider ? `${selectedProvider.name} · ${settings.model || '未选模型'}` : '请导入 API'}}</span></div>
+          </section>
+        </template>
+
+        <section v-else class="image-studio">
+          <div class="image-controls">
+            <div class="studio-intro"><span v-if="useGlyphAgent" class="codex-agent-mark large">◇</span><img v-else :src="agentImage"><div><span>IMAGE LAB</span><h2>把想法变成画面</h2><p>生成前会确认费用，图片保存到工作区的“生成图片”目录。</p></div></div>
+            <label>画面尺寸<select v-model="imageForm.size"><option>1024x1024</option><option>1536x1024</option><option>1024x1536</option></select></label>
+            <label>图片描述<textarea v-model="imageForm.prompt" placeholder="描述主体、风格、构图、光线和需要避免的内容…"></textarea></label>
+            <button class="primary image-generate" :disabled="imageBusy||!imageForm.prompt.trim()" @click="generateImage">{{imageBusy?'正在生成…':'开始生成'}}</button>
+            <button class="secondary" @click="openTarget('images')">打开生成图片目录</button>
+            <p class="image-status">{{imageStatus}}</p>
+          </div>
+           <div class="image-preview"><div v-if="!imageResult" class="preview-empty"><span v-if="useGlyphAgent" class="codex-agent-mark large">◇</span><img v-else :src="agentImage"><span>图片生成后会显示在这里</span></div><img v-else :src="imageResult" class="result-image"></div>
+        </section>
+
+        <aside v-if="inspector.open" class="inspector">
+          <header><nav><button v-for="tab in [{id:'files',name:'文件'},{id:'git',name:'Git'},{id:'search',name:'搜索'},{id:'extensions',name:'扩展'},{id:'usage',name:'统计'},{id:'checkpoints',name:'检查点'},{id:'terminal',name:'终端'},{id:'preview',name:'预览'},{id:'schedule',name:'调度'},{id:'health',name:'诊断'}]" :key="tab.id" :class="{active:inspector.tab===tab.id}" @click="inspector.tab=tab.id;refreshInspector()">{{tab.name}}</button></nav><button class="inspector-close" @click="inspector.open=false">×</button></header>
+
+          <section v-if="inspector.tab==='files'" class="inspector-pane file-pane">
+            <div class="pane-toolbar"><button :disabled="!tree.path" @click="treeParent">← 上级</button><code>{{tree.path||'.'}}</code><button @click="loadTree(tree.path)">刷新</button></div>
+            <div class="file-workspace"><div class="tree-list"><button v-for="entry in tree.entries" :key="entry.path" :class="{active:selectedFile?.path===entry.path}" @click="openTreeEntry(entry)"><i>{{entry.directory?'▸':fileIcon(entry.name)}}</i><span>{{entry.name}}</span><small v-if="!entry.directory">{{number(entry.size)}} B</small></button></div><div class="editor-panel"><div v-if="!selectedFile" class="pane-empty">选择文本或代码文件进行预览</div><template v-else><header><code>{{selectedFile.path}}</code><button :disabled="!fileDirty" @click="saveSelectedFile">保存</button></header><textarea v-model="fileContent" spellcheck="false" @input="fileDirty=true"></textarea></template></div></div>
+          </section>
+
+          <section v-else-if="inspector.tab==='git'" class="inspector-pane git-pane">
+            <div class="pane-toolbar"><b>{{git.branch||'Git'}}</b><span v-if="git.clean">工作区干净</span><button @click="gitAction('push')">Push</button><button @click="refreshGit">刷新</button></div>
+            <div class="git-files"><div v-for="file in git.files" :key="file.path"><code>{{file.index}}{{file.worktree}}</code><span>{{file.path}}</span><button @click="gitAction('stage',[file.path])">Stage</button><button @click="gitAction('unstage',[file.path])">Unstage</button></div></div>
+            <div class="diff-tabs"><button :class="{active:!git.staged}" @click="loadGitDiff(false)">未暂存</button><button :class="{active:git.staged}" @click="loadGitDiff(true)">已暂存</button></div><pre class="diff-view">{{git.diff||'没有差异'}}</pre>
+            <div class="commit-row"><input v-model="git.commitMessage" placeholder="Commit message"><button :disabled="!git.commitMessage.trim()" @click="gitAction('commit')">提交</button></div>
+          </section>
+
+          <section v-else-if="inspector.tab==='search'" class="inspector-pane search-pane"><div class="search-box"><input v-model="transcriptQuery" @keydown.enter="searchTranscripts" placeholder="搜索所有项目与会话"><button @click="searchTranscripts">搜索</button></div><div class="search-results"><button v-for="item in transcriptResults" :key="item.id" @click="openTranscriptResult(item)"><b>{{item.title}}</b><span>{{item.workspace}}</span><small>{{formatTime(item.updatedAt)}} · {{number(item.usage?.total_tokens)}} Token</small></button><div v-if="!transcriptResults.length" class="pane-empty">没有匹配的 transcript</div></div></section>
+
+          <section v-else-if="inspector.tab==='extensions'" class="inspector-pane extensions-pane">
+            <div class="extension-summary"><span><b>{{extensions.skills?.length||0}}</b> Skills</span><span><b>{{extensions.agents?.length||0}}</b> Agents</span><span><b>{{Object.keys(extensions.mcpServers||{}).length}}</b> MCP</span><span><b>{{Object.keys(extensions.hooks||{}).length}}</b> Hooks</span></div>
+            <div class="extension-actions"><button @click="loadExtensions">刷新</button><button @click="importExtension">导入签名 ZIP</button><button @click="scaffoldExtension('skill')">＋ Skill</button><button @click="scaffoldExtension('agent')">＋ Agent</button><button @click="pluginAction('list')">Plugin 列表</button><button @click="pluginAction('install')">安装 Plugin</button><button @click="pluginAction('update')">更新 Plugin</button><button @click="pluginAction('uninstall')">卸载 Plugin</button><button v-if="extensions.projectRoot" @click="openLocalFile(extensions.projectRoot)">项目扩展目录</button><button v-if="extensions.userRoot" @click="openLocalFile(extensions.userRoot)">用户扩展目录</button></div>
+            <div class="extension-heading"><h3>MCP Servers</h3><div><button v-if="extensions.mcpFileExists" @click="openLocalFile(extensions.mcpFile)">打开配置</button><button @click="testMcp">测试连接</button></div></div>
+            <pre v-if="extensionStatus" class="extension-status">{{extensionStatus}}</pre>
+            <div class="extension-list"><div v-for="(server,name) in extensions.mcpServers" :key="name"><b>{{name}}</b><code>{{server.command||server.url||'已配置'}}</code></div><div v-if="!Object.keys(extensions.mcpServers||{}).length" class="pane-empty small">当前项目没有 MCP 配置</div></div>
+            <h3>Skills</h3><div class="tag-cloud"><span v-for="skill in extensions.skills" :key="skill.path" class="extension-chip"><button @click="openLocalFile(skill.path)">/{{skill.name}} <small>{{skill.scope}} · {{skill.signatureStatus||'unmanaged'}}</small></button><button v-if="skill.scope==='project'" title="删除项目级 Skill" @click="deleteExtension('skill',skill)">×</button></span></div>
+            <h3>Subagents</h3><div class="tag-cloud"><span v-for="agent in extensions.agents" :key="agent.path" class="extension-chip"><button @click="openLocalFile(agent.path)">{{agent.name}} <small>{{agent.scope}} · {{agent.signatureStatus||'unmanaged'}}</small></button><button v-if="agent.scope==='project'" title="删除项目级 Agent" @click="deleteExtension('agent',agent)">×</button></span></div>
+            <h3>Hooks / Plugins</h3><div class="extension-list"><div v-for="(hook,name) in extensions.hooks" :key="'h'+name"><b>Hook · {{name}}</b><code>{{JSON.stringify(hook)}}</code></div><div v-for="(enabled,name) in extensions.plugins" :key="'p'+name"><b>Plugin · {{name}}</b><code>{{enabled?'enabled':'disabled'}}</code></div></div>
+            <h3>CLAUDE.md</h3><div class="extension-list"><div v-for="file in extensions.claudeMd" :key="file" @dblclick="openLocalFile(file)"><code>{{file}}</code></div></div>
+          </section>
+
+          <section v-else-if="inspector.tab==='usage'" class="inspector-pane usage-pane"><div class="usage-kpis"><div><span>会话</span><b>{{number(usage.sessions)}}</b></div><div><span>Input</span><b>{{number(usage.input)}}</b></div><div><span>Output</span><b>{{number(usage.output)}}</b></div><div><span>Total</span><b>{{number(usage.total)}}</b></div></div><h3>按模型</h3><div class="usage-bars"><div v-for="item in usage.byModel" :key="item.name"><label><span>{{item.name}}</span><b>{{number(item.total)}}</b></label><i :style="{width:Math.max(3,item.total/Math.max(...usage.byModel.map(x=>x.total),1)*100)+'%'}"></i></div></div><div class="workspace-shortcuts"><button @click="openInspector('terminal')">内置终端</button><button @click="openInspector('preview')">浏览器预览</button><button @click="openInspector('schedule')">定时任务</button><button @click="openInspector('health')">系统诊断</button></div></section>
+
+          <section v-else-if="inspector.tab==='checkpoints'" class="inspector-pane checkpoint-pane"><div class="pane-toolbar"><b>会话检查点</b><button :disabled="!currentSession?.started" @click="createCheckpoint">＋ 创建</button></div><div class="checkpoint-list"><div v-for="item in checkpoints" :key="item.id"><div><b>{{item.label}}</b><small>{{formatTime(item.createdAt)}} · {{number(item.size)}} B</small></div><button @click="restoreCheckpoint(item,true)">Fork</button><button @click="restoreCheckpoint(item,false)">恢复</button></div><div v-if="!checkpoints.length" class="pane-empty">还没有检查点</div></div></section>
+
+          <section v-else-if="inspector.tab==='terminal'" class="inspector-pane terminal-pane"><div class="terminal-search"><input v-model="terminalSearch" @input="searchTerminal(false)" @keydown.enter.prevent="searchTerminal(false)" placeholder="搜索终端输出"><small>{{terminalSearch?terminalSearchResult.total?`${terminalSearchResult.resultIndex+1}/${terminalSearchResult.total}`:`${terminalSearchCount} 个匹配`:''}}</small><button v-if="terminalSearch" title="上一个匹配" @click="searchTerminal(true)">↑</button><button v-if="terminalSearch" title="下一个匹配" @click="searchTerminal(false)">↓</button><button v-if="terminalSearch" @click="clearTerminalSearch">清除</button></div><div ref="xtermHost" class="terminal-output xterm-host" aria-label="Claude Workbench 完整终端"></div><div class="terminal-controls"><button title="中断当前命令" @click="sendTerminalKey('\u0003')">Ctrl+C</button><button @click="sendTerminalKey('\u001b[A')">↑</button><button @click="sendTerminalKey('\u001b[B')">↓</button><button @click="sendTerminalKey('\u0009')">Tab</button><button @click="sendTerminalKey('\u001b')">Esc</button><small>xterm.js + ConPTY · {{terminalColumns}}×{{terminalRows}} · VT/鼠标/中文宽字符</small></div><div class="terminal-input"><span>›</span><input v-model="terminalCommand" :disabled="terminalRunning" @keydown.enter="runTerminal" placeholder="输入命令并按 Enter"><button @click="runTerminal">运行</button></div></section>
+          <section v-else-if="inspector.tab==='preview'" class="inspector-pane preview-pane"><div class="preview-bar"><input v-model="previewUrl" @keydown.enter="$refs.previewFrame.src=previewUrl"><button @click="$refs.previewFrame.src=previewUrl">打开</button></div><iframe ref="previewFrame" :src="previewUrl"></iframe></section>
+          <section v-else-if="inspector.tab==='schedule'" class="inspector-pane schedule-pane"><div class="schedule-form"><textarea v-model="scheduleForm.text" placeholder="定时发送的指令"></textarea><label>首次执行<input type="datetime-local" v-model="scheduleForm.at"></label><label>重复间隔（分钟，0 表示单次）<input type="number" min="0" v-model="scheduleForm.repeatMinutes"></label><label>失败重试次数<input type="number" min="0" max="20" v-model="scheduleForm.maxRetries"></label><label>会话忙碌时<select v-model="scheduleForm.conflictPolicy"><option value="queue">等待后重试</option><option value="skip">跳过本次</option></select></label><button @click="addSchedule">添加后台调度</button></div><div class="schedule-list"><div v-for="item in scheduler" :key="item.id" :class="{'schedule-dead':item.state==='dead_letter'}"><span :class="{disabled:!item.enabled}">{{item.text}}</span><small>{{formatTime(item.at)}}{{item.repeatMinutes?` · 每 ${item.repeatMinutes} 分钟`:''}} · {{scheduleState(item)}}<template v-if="item.retryCount"> · 已重试 {{item.retryCount}}/{{item.maxRetries}}</template><template v-if="item.lastError"> · {{item.lastError}}</template></small><button v-if="item.state==='dead_letter'" @click="replaySchedule(item)">重放</button><button @click="removeSchedule(item.id)">×</button></div></div></section>
+          <section v-else class="inspector-pane health-pane"><div class="pane-toolbar"><b>本机诊断</b><button @click="exportDiagnostics">导出脱敏诊断包</button></div><p class="diagnostic-note">诊断包只保存在本机，不会自动上传；API Key、Authorization 与密钥字段会被替换为 [REDACTED]。</p><div class="health-card" v-for="(value,key) in health" :key="key"><span>{{key}}</span><code>{{value}}</code></div><div class="permission-config"><h3>细粒度工具权限</h3><label>允许工具<textarea v-model="settings.allowedTools" @change="saveSettings"></textarea></label><label>禁止工具<textarea v-model="settings.disallowedTools" @change="saveSettings"></textarea></label><p>选择“限定工具”后，仅允许上述工具；路径仍按当前工作区和附件目录授权。</p></div></section>
+        </aside>
+      </main>
+    </div>
+
+    <div v-if="providerModal" class="modal-backdrop" @mousedown.self="closeProviderModal">
+      <div class="modal provider-modal">
+        <header><div><span class="eyebrow">SETTINGS</span><h2>设置</h2><p>管理工作区、外观、API 与聊天归档。</p></div><div class="modal-head-actions"><button v-if="settingsTab==='api'&&providerForm.id" class="new-provider" @click="resetProviderForm">＋ 新建 API</button><button class="modal-close" @click="closeProviderModal">×</button></div></header>
+        <div class="modal-scroll settings-scroll">
+          <nav class="settings-nav"><button :class="{active:settingsTab==='workspace'}" @click="settingsTab='workspace'">工作区 <em>{{projects.length}}</em></button><button :class="{active:settingsTab==='appearance'}" @click="settingsTab='appearance'">外观与 Agent</button><button :class="{active:settingsTab==='api'}" @click="settingsTab='api'">API 设置 <em>{{providers.length}}</em></button><button :class="{active:settingsTab==='archive'}" @click="settingsTab='archive'">已归档聊天 <em>{{archivedSessions.length}}</em></button></nav>
+          <div class="settings-content">
+          <div v-if="settingsTab==='api'" class="api-settings-pane">
+          <div class="settings-pane-title"><span class="eyebrow">API ROUTER</span><h3>{{providerForm.id?'编辑 API 配置':'导入 API 令牌'}}</h3><p>令牌只导入一次；Text 与 Image capability 可同时启用并独立分流。</p></div>
+          <div class="form-grid two"><label>显示名称<input v-model="providerForm.name" placeholder="例如：我的综合 API"></label><label>鉴权方式<select v-model="providerForm.authStyle"><option value="auto">自动尝试</option><option value="bearer">Bearer Token</option><option value="x-api-key">x-api-key</option></select></label></div>
+          <label>API 令牌 <small>{{providerForm.id?'留空表示保留原令牌':''}}</small><input type="password" v-model="providerForm.token" autocomplete="new-password" placeholder="仅在本机加密保存"></label>
+          <div class="provider-autofill"><div><span>仅凭 API Key 配置</span><p>选择 Key 所属平台后，安全读取 Text 与 Image 接口及模型；不会向其他平台试探。</p></div><label>API 服务商<select v-model="providerForm.preset" @change="providerPresetChanged"><optgroup label="中国服务商"><option value="siliconflow">SiliconFlow</option><option value="deepseek">DeepSeek</option><option value="moonshot">Moonshot / Kimi</option><option value="zhipu">智谱 BigModel</option><option value="minimax">MiniMax</option></optgroup><optgroup label="国际服务商"><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option><option value="openrouter">OpenRouter</option><option value="together">Together AI</option><option value="groq">Groq</option><option value="mistral">Mistral AI</option></optgroup><optgroup label="新兴 / 高速推理"><option value="xai">xAI</option><option value="cerebras">Cerebras</option><option value="sambanova">SambaNova</option><option value="nvidia">NVIDIA NIM</option></optgroup><option value="custom">自定义 / 其他</option></select></label><button :disabled="!!discovering" @click="autoConfigureProvider">{{discovering==='all'?'正在识别…':'一键识别接口与模型'}}</button></div>
+
+          <section class="capability-card" :class="{enabled:providerForm.text.enabled}">
+            <div class="capability-head"><div><span class="cap-icon">T</span><div><h3>Text capability</h3><p>用于 Claude Code 文字对话、文件和工具工作流</p></div></div><label class="switch"><input type="checkbox" v-model="providerForm.text.enabled"><span></span></label></div>
+            <div v-if="providerForm.text.enabled" class="capability-body"><div class="form-grid two"><label>文字协议<select v-model="providerForm.text.protocol"><option value="anthropic">Anthropic-compatible</option><option value="openai">OpenAI-compatible（自动适配）</option></select></label><label>文字接口地址<input v-model="providerForm.text.baseUrl" placeholder="https://api.example.com/v1"></label></div><div class="model-row"><label>文字模型<input v-model="providerForm.text.modelsText" placeholder="model-a, model-b"></label><button :disabled="!!discovering" @click="discover('text')">{{discovering==='text'?'读取中…':'读取模型'}}</button></div><p class="adapter-note" v-if="providerForm.text.protocol==='openai'">Adapter 会在本机把 Anthropic Messages 格式转换为 OpenAI Chat Completions，并保留 streaming 与 tool calls。</p></div>
+          </section>
+
+          <section class="capability-card" :class="{enabled:providerForm.image.enabled}">
+            <div class="capability-head"><div><span class="cap-icon image">I</span><div><h3>Image capability</h3><p>使用同一个令牌调用图像生成接口</p></div></div><label class="switch"><input type="checkbox" v-model="providerForm.image.enabled"><span></span></label></div>
+            <div v-if="providerForm.image.enabled" class="capability-body"><div class="form-grid two"><label>生图协议<select v-model="providerForm.image.protocol"><option value="openai-images">OpenAI Images-compatible</option></select></label><label>生图接口地址<input v-model="providerForm.image.baseUrl" placeholder="https://api.example.com/v1"></label></div><div class="model-row"><label>生图模型<input v-model="providerForm.image.modelsText" placeholder="image-model-a"></label><button :disabled="!!discovering" @click="discover('image')">{{discovering==='image'?'读取中…':'读取模型'}}</button></div></div>
+          </section>
+          <div v-if="providerError" class="form-error">{{providerError}}</div>
+          <div v-if="discoverMessage" class="form-success">{{discoverMessage}}</div>
+          </div>
+          <div v-else-if="settingsTab==='workspace'" class="workspace-settings-pane">
+            <div class="settings-pane-title"><span class="eyebrow">WORKSPACES</span><h3>工作区</h3><p>对话、文件、Git 和终端都跟随当前工作区。这里只移除列表项，不会删除磁盘文件。</p></div>
+            <div class="workspace-settings-toolbar"><button class="primary" @click="addProject">＋ 添加工作区</button><button class="secondary" @click="openTarget('workspace')">在资源管理器打开</button></div>
+            <div class="workspace-settings-list"><div v-for="project in projects" :key="project.path" :class="{active:project.path.toLowerCase()===workspace.toLowerCase()}"><button class="workspace-select" :disabled="busy" @click="switchProject(project.path)"><span class="workspace-symbol">{{project.git?'⌘':'▣'}}</span><span><b>{{project.name}}</b><code>{{project.path}}</code></span><em>{{project.transcriptCount||0}} 个 transcript</em></button><button class="workspace-remove" :disabled="project.path.toLowerCase()===workspace.toLowerCase()" title="从列表移除，不删除文件" @click="removeProject(project)">×</button></div></div>
+          </div>
+          <div v-else-if="settingsTab==='appearance'" class="appearance-settings-pane">
+            <div class="settings-pane-title"><span class="eyebrow">APPEARANCE</span><h3>外观与 Agent 皮肤</h3><p>主题和皮肤只影响界面；Claude Code runtime、会话和工具能力保持不变。</p></div>
+            <section class="appearance-section"><h4>主题</h4><div class="appearance-cards"><button v-for="item in [{id:'system',name:'跟随系统',hint:'自动匹配 Windows'},{id:'dark',name:'深色',hint:'中性石墨色'},{id:'light',name:'浅色',hint:'柔和纸白色'}]" :key="item.id" :class="{active:settings.theme===item.id}" @click="setAppearance('theme',item.id)"><i :class="'theme-swatch '+item.id"></i><b>{{item.name}}</b><span>{{item.hint}}</span></button></div></section>
+            <section class="appearance-section"><div class="appearance-heading"><div><h4>Agent 皮肤</h4><p>导入一个 ZIP 皮肤包；软件会安全解压并校验其中唯一的 manifest.json、CSS 与 PNG/JPG/WebP。</p></div><button class="secondary" @click="importSkin">导入 ZIP 皮肤包</button></div><div class="appearance-cards skin-cards"><div v-for="item in appearanceSkins" :key="item.id" class="skin-card-wrap" :class="{active:settings.skin===item.id}"><button class="skin-card-select" @click="setAppearance('skin',item.id)"><i :class="'skin-swatch '+item.id"><span v-if="item.id==='codex'||(item.compatibility==='codex'&&!item.assets?.agent)">◇</span><img v-else :src="item.assets?.agent?skinAssetUrl(item,item.assets.agent):'/static/assets/mascot.png'"></i><b>{{item.name}}</b><span>{{item.hint}}</span></button><button v-if="item.imported" class="skin-card-delete" title="删除导入的皮肤副本" @click="deleteSkin(item)">×</button></div></div></section>
+            <section class="appearance-section update-channel-section"><div class="appearance-heading"><div><h4>版本与更新通道</h4><p>Stable 强制要求受信任 Authenticode；Preview 也默认要求签名。更新失败仍保留 previous.exe。</p></div><button class="secondary" :disabled="updateConfig.checking" @click="checkUpdate">{{updateConfig.checking?'检查中…':'检查更新'}}</button></div><div class="form-grid two"><label>通道<select v-model="updateConfig.channel" @change="saveUpdateConfig"><option value="stable">Stable</option><option value="preview">Preview</option></select></label><label>HTTPS 发布清单<input v-model="updateConfig.manifestUrl" @change="saveUpdateConfig" placeholder="https://example.com/stable.json"></label></div><label v-if="updateConfig.channel==='preview'" class="update-preview-option"><input type="checkbox" v-model="updateConfig.allowUnsignedPreview" @change="saveUpdateConfig"> 本地 Preview 测试允许未签名包（Stable 永不允许）</label><p class="update-channel-status">当前 {{updateConfig.currentVersion||'未知版本'}} · {{updateConfig.message||'尚未检查更新'}}</p></section>
+          </div>
+          <div v-else class="archive-settings-pane">
+            <div class="archive-toolbar"><div><span class="eyebrow">ARCHIVE</span><h3>已归档聊天</h3><p>归档只隐藏左侧 GUI 会话；永久删除会同时移除 Claude transcript。</p></div><button class="archive-clear" :disabled="!archivedSessions.length" @click="clearArchivedSessions">清空归档</button></div>
+            <div class="archive-browser">
+              <div class="archive-list"><div v-if="!archivedSessions.length" class="archive-empty">还没有归档聊天</div><div v-for="session in archivedSessions" :key="session.id" class="archive-row" :class="{active:archivePreview?.session?.id===session.id}" @click="viewArchivedSession(session.id)"><div><b>{{session.title}}</b><small>{{formatTime(session.archivedAt||session.updatedAt)}}</small></div><div class="archive-row-actions"><button @click.stop="restoreArchivedSession(session.id)">恢复</button><button class="danger" @click.stop="permanentlyDeleteArchived(session.id)">删除</button></div></div></div>
+              <div class="archive-preview"><div v-if="!archivePreview" class="archive-preview-empty"><span>◇</span><p>选择左侧归档聊天查看内容</p></div><template v-else><header><div><b>{{archivePreview.session.title}}</b><small>{{archivePreview.messages.length}} 条消息</small></div><button @click="restoreArchivedSession(archivePreview.session.id)">恢复会话</button></header><div class="archive-messages"><div v-for="message in archivePreview.messages" :key="message.id" class="archive-message" :class="message.role"><span>{{message.role==='user'?'你':message.role==='assistant'?'Claude':'系统'}}</span><p>{{message.text}}</p><small v-if="message.attachments?.length">附件：{{message.attachments.map(attachmentName).join('、')}}</small></div></div></template></div>
+            </div>
+          </div>
+          </div>
+        </div>
+        <footer v-if="settingsTab==='api'"><button v-if="providerForm.id" class="danger-link" @click="deleteProvider">删除配置</button><span></span><button class="secondary" @click="closeProviderModal">取消</button><button class="primary" :disabled="savingProvider" @click="saveProvider">{{savingProvider?'保存中…':'加密保存'}}</button></footer>
+        <footer v-else><span></span><button class="secondary" @click="closeProviderModal">关闭</button></footer>
+      </div>
+    </div>
+    <div v-if="contextMenu.show" class="selection-menu" :style="{left:contextMenu.x+'px',top:contextMenu.y+'px'}" @mousedown.stop><button @click="copyContextSelection">复制</button><button @click="quoteContextSelection">引用</button><button @click="exportContextSelection">导出 TXT</button></div>
+    <div v-if="palette.open" class="palette-backdrop" @mousedown.self="closePalette"><section class="command-palette"><header><span>⌕</span><input ref="paletteInput" v-model="palette.query" @input="paletteQueryChanged" @keydown.esc="closePalette" @keydown.down.prevent="movePalette(1)" @keydown.up.prevent="movePalette(-1)" @keydown.enter.prevent="executePalette" placeholder="搜索会话或输入操作…"></header><div class="palette-results"><button v-for="(item,index) in paletteItems" :key="item.id" :class="{active:index===palette.index}" @mouseenter="palette.index=index" @click="runPaletteItem(item)"><i>{{item.icon}}</i><span><b>{{item.title}}</b><small>{{item.hint}}</small></span><kbd>{{item.shortcut||''}}</kbd></button><div v-if="!paletteItems.length" class="pane-empty small">没有匹配项</div></div><footer>↑↓ 浏览 · Enter 执行 · Esc 关闭</footer></section></div>
+    <div v-if="approvals.length" class="approval-stack">
+      <section v-for="item in approvals" :key="item.id" class="approval-card">
+        <header><div><span>CLAUDE CODE 权限请求</span><h3>{{toolName(item.toolName)}}</h3></div><i>{{formatTime(item.createdAt)}}</i></header>
+        <div class="approval-risk"><b>{{item.capability||'unknown'}}</b><em :class="item.risk">{{item.risk||'high'}}</em><span>{{item.reason}}</span></div>
+        <pre>{{approvalInput(item)}}</pre>
+        <footer><button :disabled="!!approvalBusy" class="approval-deny" @click="respondApproval(item,'deny')">拒绝</button><button :disabled="!!approvalBusy" class="approval-allow" @click="respondApproval(item,'allow')">允许一次</button></footer>
+      </section>
+    </div>
+  </div>
+  <script src="/static/vendor/vue.global.prod.js?v=6.3.0"></script>
+  <script src="/static/vendor/xterm.js?v=6.3.0"></script>
+  <script src="/static/vendor/xterm-addon-fit.js?v=6.3.0"></script>
+  <script src="/static/vendor/xterm-addon-search.js?v=6.3.0"></script>
+  <script src="/static/app.js?v=6.3.0"></script>
+</body>
+</html>

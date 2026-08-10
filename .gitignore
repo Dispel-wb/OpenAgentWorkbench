@@ -1,0 +1,42 @@
+# Build outputs
+build/
+dist/
+release/
+*.exe
+*.pdb
+*.zip
+
+# Local dependencies and caches
+.venv/
+frontend-build/
+node_modules/
+__pycache__/
+*.pyc
+
+# Local data and secrets
+.claude-gui-v2/
+providers-v2.json
+runtime-state.json
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.dmp
+.env
+.env.*
+
+# Local-only artwork and generated captures
+static/assets/
+tests/*.png
+tests/*.jpg
+tests/*.jpeg
+tests/*.webp
+tests/*.ico
+
+# Editors and operating systems
+.vs/
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store
