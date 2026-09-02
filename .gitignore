@@ -1,5 +1,6 @@
 # Build outputs
-build/
+build/*
+!build/dependencies.lock.json
 dist/
 release/
 *.exe
@@ -8,6 +9,8 @@ release/
 
 # Local dependencies and caches
 .venv/
+.packages/
+.worker-runtimes/
 frontend-build/
 node_modules/
 __pycache__/

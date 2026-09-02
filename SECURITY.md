@@ -12,4 +12,6 @@ Include the affected version, Windows version, reproduction steps and a redacted
 
 ## Local trust boundary
 
-The application runs commands and file operations with the permissions of the current Windows user. Workspace-external access and dangerous operations require explicit approval unless the user deliberately enables a broader permission mode. Imported skins, MCP servers, Skills and provider endpoints must be treated as untrusted input.
+The application runs with the current Windows user's privileges. Claude's workbench permission broker, Codex's sandbox and DSHarness's native policy are distinct boundaries. The Codex/DSHarness adapters reject unsupported workbench interactive approvals and tool filters instead of silently ignoring them. Full-access mode deliberately broadens access. CLI-owned hooks, MCP servers, Skills, imported skins and provider endpoints must be treated as untrusted input.
+
+Automated regression and release scanning do not constitute a complete independent security audit. See [the threat model](docs/THREAT_MODEL.md) and [CLI capability boundaries](docs/AGENT_WORKER_SDK.md). Releases currently remain unsigned; a self-signed certificate would not establish trusted publisher identity.

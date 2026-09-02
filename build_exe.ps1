@@ -1,9 +1,11 @@
 param(
-    [ValidateSet('Local','OpenSource')][string]$Edition = 'OpenSource',
+    [ValidateSet('Local','OpenSource')][string]$Edition = 'Local',
     [string]$VisualStudioRoot = '',
     [string]$WebViewLibraryRoot = '',
     [string]$NewtonsoftJsonPath = '',
-    [string]$PythonPath = ''
+    [string]$PythonPath = '',
+    [string]$DependencyRoot = '',
+    [string]$OutputPath = ''
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -14,20 +16,28 @@ $asset = Join-Path $root 'static\assets\mascot.png'
 $icon = Join-Path $root 'static\assets\claude-workbench.ico'
 $native = Join-Path $root 'native'
 $dist = Join-Path $root 'dist'
-$output = if ($isOpenSource) { Join-Path $dist 'opensource\OpenAgentWorkbench.exe' } else { Join-Path $dist 'ClaudeCodeWorkbench.exe' }
+$defaultOutput = if ($isOpenSource) { Join-Path $dist 'opensource\OpenAgentWorkbench.exe' } else { Join-Path $dist 'ClaudeCodeWorkbench.exe' }
+$output = if ([string]::IsNullOrWhiteSpace($OutputPath)) { $defaultOutput } else { [IO.Path]::GetFullPath($OutputPath) }
 
+$dependencyPath = if ($DependencyRoot) { [IO.Path]::GetFullPath($DependencyRoot) } elseif (Test-Path -LiteralPath (Join-Path $root '.packages')) { Join-Path $root '.packages' } else { '' }
 $vsRoot = $VisualStudioRoot
-if (-not $vsRoot) { $vsRoot = $env:VSINSTALLDIR }
-if (-not $vsRoot) {
-    $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-    if (Test-Path -LiteralPath $vswhere) { $vsRoot = (& $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath | Select-Object -First 1) }
+if ($dependencyPath) {
+    $csc = Join-Path $dependencyPath 'microsoft.net.compilers.toolset\4.14.0\tasks\net472\csc.exe'
+    $newtonsoft = Join-Path $dependencyPath 'newtonsoft.json\13.0.3\lib\net45\Newtonsoft.Json.dll'
+    $webviewRoot = Join-Path $dependencyPath 'microsoft.web.webview2\1.0.3856.49'
+} else {
+    if (-not $vsRoot) { $vsRoot = $env:VSINSTALLDIR }
+    if (-not $vsRoot) {
+        $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+        if (Test-Path -LiteralPath $vswhere) { $vsRoot = (& $vswhere -latest -products * -requires Microsoft.Component.MSBuild -property installationPath | Select-Object -First 1) }
+    }
+    if (-not $vsRoot) { throw 'Visual Studio with MSBuild/Roslyn was not found. Pass -VisualStudioRoot or restore locked dependencies.' }
+    $csc = Join-Path $vsRoot 'MSBuild\Current\Bin\Roslyn\csc.exe'
+    $newtonsoft = if ($NewtonsoftJsonPath) { $NewtonsoftJsonPath } else { Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\NuGet\Newtonsoft.Json.dll' }
+    $webviewRoot = if ($WebViewLibraryRoot) { $WebViewLibraryRoot } elseif ($env:WEBVIEW2_LIBRARY_ROOT) { $env:WEBVIEW2_LIBRARY_ROOT } else { Join-Path $root '.venv\Lib\site-packages\webview\lib' }
 }
-if (-not $vsRoot) { throw 'Visual Studio with MSBuild/Roslyn was not found. Pass -VisualStudioRoot.' }
-$csc = Join-Path $vsRoot 'MSBuild\Current\Bin\Roslyn\csc.exe'
-$newtonsoft = if ($NewtonsoftJsonPath) { $NewtonsoftJsonPath } else { Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\NuGet\Newtonsoft.Json.dll' }
-$webviewRoot = if ($WebViewLibraryRoot) { $WebViewLibraryRoot } elseif ($env:WEBVIEW2_LIBRARY_ROOT) { $env:WEBVIEW2_LIBRARY_ROOT } else { Join-Path $root '.venv\Lib\site-packages\webview\lib' }
-$webviewCore = Join-Path $webviewRoot 'Microsoft.Web.WebView2.Core.dll'
-$webviewForms = Join-Path $webviewRoot 'Microsoft.Web.WebView2.WinForms.dll'
+$webviewCore = if ($dependencyPath) { Join-Path $webviewRoot 'lib\net462\Microsoft.Web.WebView2.Core.dll' } else { Join-Path $webviewRoot 'Microsoft.Web.WebView2.Core.dll' }
+$webviewForms = if ($dependencyPath) { Join-Path $webviewRoot 'lib\net462\Microsoft.Web.WebView2.WinForms.dll' } else { Join-Path $webviewRoot 'Microsoft.Web.WebView2.WinForms.dll' }
 $webviewLoader = Join-Path $webviewRoot 'runtimes\win-x64\native\WebView2Loader.dll'
 
 foreach ($required in @($python, $csc, $newtonsoft, $webviewCore, $webviewForms, $webviewLoader)) {
@@ -46,7 +56,8 @@ if ($LASTEXITCODE -ne 0) { throw "Icon build failed: $LASTEXITCODE" }
 
 New-Item -ItemType Directory -Path (Split-Path $output -Parent) -Force | Out-Null
 $arguments = @(
-    '/nologo', '/target:winexe', '/platform:x64', '/optimize+', '/debug-', '/langversion:latest', '/utf8output',
+    '/nologo', '/target:winexe', '/platform:x64', '/optimize+', '/debug-', '/deterministic+', '/langversion:latest', '/utf8output',
+    "/pathmap:$root=/_/src",
     "/out:$output", "/win32icon:$icon", "/win32manifest:$(Join-Path $native 'app.manifest')",
     '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll',
     '/reference:System.Windows.Forms.dll', '/reference:System.Net.Http.dll', '/reference:System.Security.dll',
@@ -59,10 +70,12 @@ $arguments = @(
 )
 if ($isOpenSource) { $arguments += '/define:OPEN_SOURCE' }
 
-$resources = @{
+$resources = [ordered]@{
     (Join-Path $root 'static\index.html') = 'static.index.html'
     (Join-Path $root 'static\app.js') = 'static.app.js'
     (Join-Path $root 'static\styles.css') = 'static.styles.css'
+    (Join-Path $root 'static\modules\ui-store.js') = 'static.modules.ui-store.js'
+    (Join-Path $root 'static\modules\provider-catalog.js') = 'static.modules.provider-catalog.js'
     (Join-Path $root 'static\vendor\vue.global.prod.js') = 'static.vendor.vue.global.prod.js'
     (Join-Path $root 'static\vendor\xterm.js') = 'static.vendor.xterm.js'
     (Join-Path $root 'static\vendor\xterm.css') = 'static.vendor.xterm.css'
@@ -78,7 +91,7 @@ if (-not $isOpenSource) {
 foreach ($entry in $resources.GetEnumerator()) {
     $arguments += "/resource:$($entry.Key),$($entry.Value)"
 }
-$arguments += Get-ChildItem -LiteralPath $native -Filter '*.cs' | ForEach-Object { $_.FullName }
+$arguments += Get-ChildItem -LiteralPath $native -Filter '*.cs' | Sort-Object Name | ForEach-Object { $_.FullName }
 
 & $csc @arguments
 if ($LASTEXITCODE -ne 0) { throw "Native C# build failed: $LASTEXITCODE" }

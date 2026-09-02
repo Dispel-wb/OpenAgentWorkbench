@@ -86,8 +86,8 @@ $updateCheck = Invoke-RestMethod -Method Post -Uri "$baseUrl/api/workbench/updat
 $insecureManifestRejected = $false
 try { Invoke-RestMethod -Method Post -Uri "$baseUrl/api/workbench/update/config" -Headers $headers -ContentType 'application/json' -Body (@{ channel = 'stable'; manifestUrl = 'http://example.invalid/release.json' } | ConvertTo-Json) | Out-Null } catch { $insecureManifestRejected = $true }
 
-Assert-True ($bootstrap.version -match '^6\.3\.0-native\.(local|opensource)$') 'version mismatch'
-Assert-True ($bootstrap.edition.id -in @('local','opensource')) 'edition metadata missing'
+Assert-True ($bootstrap.version -eq '6.4.21-dev.native.local') 'version mismatch'
+Assert-True ($bootstrap.edition.id -eq 'local' -and -not [bool]$bootstrap.edition.openSource) 'local edition metadata mismatch'
 Assert-True ($bootstrap.backend -eq 'C#/.NET native host') 'backend type mismatch'
 Assert-True ([bool]($bootstrap.trayMode)) 'tray mode is disabled'
 Assert-True ($projects.Count -gt 0) 'project list is empty'

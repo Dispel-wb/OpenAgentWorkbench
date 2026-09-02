@@ -58,6 +58,8 @@ Copy-Item -LiteralPath $json -Destination (Join-Path $root 'Newtonsoft.Json.dll'
 $env:CLAUDE_GUI_WORKSPACE = $root
 $env:CLAUDE_GUI_ROOT = 'D:\softwares\ClaudeCode'
 $env:CLAUDE_GUI_CLAUDE_EXE = $fake
+$env:CLAUDE_GUI_TEST_MODE = '1'
+$env:CLAUDE_GUI_MUTEX_SCOPE = 'fault-stress-' + [guid]::NewGuid().ToString('N')
 $runtimePath = Join-Path $root '.claude-gui-v2\runtime-state.json'
 $hostProcess = $null
 try {
@@ -109,4 +111,5 @@ finally {
     Get-CimInstance Win32_Process | Where-Object {
         $_.ExecutablePath -eq $Executable -or $_.ExecutablePath -eq $fake
     } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Remove-Item Env:CLAUDE_GUI_WORKSPACE,Env:CLAUDE_GUI_ROOT,Env:CLAUDE_GUI_CLAUDE_EXE,Env:CLAUDE_GUI_TEST_MODE,Env:CLAUDE_GUI_MUTEX_SCOPE -ErrorAction SilentlyContinue
 }

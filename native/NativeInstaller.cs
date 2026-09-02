@@ -41,13 +41,14 @@ namespace ClaudeCodeWorkbench
                 if (Environment.GetEnvironmentVariable("CLAUDE_GUI_INSTALL_TEST") != "1") { WriteStartMenuShortcut(destination); WriteUninstallRegistry(destination, target); }
                 return 0;
             }
-            catch (Exception error) { CrashLog.Write("Install", error); return 81; }
+            catch (Exception error) { CrashLog.Handled("Install", error); return 81; }
         }
 
         public static int BeginUninstall(string requestedTarget)
         {
             try
             {
+                NativeHostWatchdog.SignalStop();
                 var target = InstallTarget(requestedTarget); VerifyInstallTarget(target);
                 var helper = Path.Combine(Path.GetTempPath(), "ClaudeWorkbench-Uninstall-" + Guid.NewGuid().ToString("N") + ".exe");
                 File.Copy(Assembly.GetExecutingAssembly().Location, helper, true);
@@ -55,7 +56,7 @@ namespace ClaudeCodeWorkbench
                 { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden, WorkingDirectory = Path.GetTempPath() });
                 return 0;
             }
-            catch (Exception error) { CrashLog.Write("Uninstall", error); return 82; }
+            catch (Exception error) { CrashLog.Handled("Uninstall", error); return 82; }
         }
 
         public static int FinishUninstall(string target, int parentPid)
@@ -66,13 +67,14 @@ namespace ClaudeCodeWorkbench
                 try { using (var parent = Process.GetProcessById(parentPid)) parent.WaitForExit(15000); } catch { }
                 if (Environment.GetEnvironmentVariable("CLAUDE_GUI_INSTALL_TEST") != "1")
                 {
+                    try { NativeStartupRegistration.SetEnabled(false); } catch { }
                     RemoveStartMenuShortcut();
                     try { Registry.CurrentUser.DeleteSubKeyTree(@"Software\Microsoft\Windows\CurrentVersion\Uninstall\" + ProductId, false); } catch { }
                 }
                 Directory.Delete(Path.GetFullPath(target), true);
                 return 0;
             }
-            catch (Exception error) { CrashLog.Write("FinishUninstall", error); return 83; }
+            catch (Exception error) { CrashLog.Handled("FinishUninstall", error); return 83; }
         }
 
         private static string InstallTarget(string value)

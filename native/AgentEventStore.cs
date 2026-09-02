@@ -10,7 +10,7 @@ using Newtonsoft.Json.Linq;
 
 namespace ClaudeCodeWorkbench
 {
-    internal sealed class AgentEventStore
+    internal sealed partial class AgentEventStore
     {
         private readonly object _gate = new object();
         private readonly string _path;
@@ -35,27 +35,57 @@ CREATE INDEX IF NOT EXISTS ix_runs_task_updated ON runs(task_id,updated_at DESC)
 CREATE TABLE IF NOT EXISTS events(seq INTEGER PRIMARY KEY AUTOINCREMENT,event_id TEXT NOT NULL UNIQUE,run_id TEXT NOT NULL,run_seq INTEGER NOT NULL,task_id TEXT,turn_id TEXT,type TEXT NOT NULL,payload_json TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(run_id) REFERENCES runs(id) ON DELETE CASCADE,UNIQUE(run_id,run_seq));
 CREATE INDEX IF NOT EXISTS ix_events_run_seq ON events(run_id,run_seq);
 CREATE TABLE IF NOT EXISTS approvals(id TEXT PRIMARY KEY,run_id TEXT,tool_name TEXT,state TEXT NOT NULL,input_json TEXT,decision_json TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS tool_calls(id TEXT PRIMARY KEY,run_id TEXT NOT NULL,task_id TEXT,tool_name TEXT NOT NULL,state TEXT NOT NULL,input_json TEXT NOT NULL,output_json TEXT,error_text TEXT,started_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS tool_calls(id TEXT PRIMARY KEY,run_id TEXT NOT NULL,task_id TEXT,tool_name TEXT NOT NULL,state TEXT NOT NULL,input_json TEXT NOT NULL,output_json TEXT,error_text TEXT,input_meta_json TEXT NOT NULL DEFAULT '{}',output_meta_json TEXT NOT NULL DEFAULT '{}',terminal_reason TEXT,duration_ms INTEGER,started_at TEXT NOT NULL,updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_tool_calls_run_updated ON tool_calls(run_id,updated_at);
-CREATE TABLE IF NOT EXISTS schedules(id TEXT PRIMARY KEY,task_id TEXT,state TEXT NOT NULL,due_at TEXT,repeat_minutes INTEGER NOT NULL DEFAULT 0,conflict_policy TEXT,request_id TEXT UNIQUE,payload_json TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,retry_count INTEGER NOT NULL DEFAULT 0,max_retries INTEGER NOT NULL DEFAULT 3,lease_until TEXT,claimed_by TEXT,last_error TEXT,dead_lettered_at TEXT,last_run_at TEXT);
+CREATE TABLE IF NOT EXISTS schedules(id TEXT PRIMARY KEY,task_id TEXT,state TEXT NOT NULL,due_at TEXT,repeat_minutes INTEGER NOT NULL DEFAULT 0,conflict_policy TEXT,request_id TEXT UNIQUE,payload_json TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,retry_count INTEGER NOT NULL DEFAULT 0,max_retries INTEGER NOT NULL DEFAULT 3,lease_until TEXT,claimed_by TEXT,last_error TEXT,dead_lettered_at TEXT,last_run_at TEXT,active_run_id TEXT,last_run_id TEXT);
 CREATE TABLE IF NOT EXISTS task_queue(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,ordinal INTEGER NOT NULL,kind TEXT NOT NULL,state TEXT NOT NULL,prompt TEXT NOT NULL,request_id TEXT NOT NULL UNIQUE,run_id TEXT,input_offset INTEGER NOT NULL DEFAULT 0,payload_json TEXT NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_task_queue_task_state_order ON task_queue(task_id,state,ordinal,created_at);
 CREATE TABLE IF NOT EXISTS artifacts(id TEXT PRIMARY KEY,task_id TEXT,run_id TEXT,kind TEXT NOT NULL,path TEXT,mime_type TEXT,size_bytes INTEGER,sha256 TEXT,metadata_json TEXT,created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_artifacts_run ON artifacts(run_id,created_at);
 CREATE TABLE IF NOT EXISTS context_entries(id TEXT PRIMARY KEY,run_id TEXT NOT NULL,task_id TEXT,source_type TEXT NOT NULL,label TEXT,estimated_tokens INTEGER NOT NULL,content_sha256 TEXT,metadata_json TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_context_entries_run ON context_entries(run_id,created_at);
+CREATE TABLE IF NOT EXISTS workspace_memories(id TEXT PRIMARY KEY,workspace_path TEXT NOT NULL,title TEXT NOT NULL,content TEXT NOT NULL,state TEXT NOT NULL DEFAULT 'active',source TEXT NOT NULL DEFAULT 'manual',source_run_id TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS ix_workspace_memories_scope ON workspace_memories(workspace_path,state,updated_at DESC);
+CREATE TABLE IF NOT EXISTS provider_health(provider_id TEXT NOT NULL,model_id TEXT NOT NULL,state TEXT NOT NULL,consecutive_failures INTEGER NOT NULL DEFAULT 0,success_count INTEGER NOT NULL DEFAULT 0,failure_count INTEGER NOT NULL DEFAULT 0,probe_success_count INTEGER NOT NULL DEFAULT 0,probe_failure_count INTEGER NOT NULL DEFAULT 0,last_latency_ms INTEGER,last_success_at TEXT,last_failure_at TEXT,last_probe_at TEXT,cooldown_until TEXT,failure_kind TEXT,last_error TEXT,evidence TEXT,updated_at TEXT NOT NULL,PRIMARY KEY(provider_id,model_id));
+CREATE INDEX IF NOT EXISTS ix_provider_health_state ON provider_health(state,cooldown_until,updated_at DESC);
 CREATE TABLE IF NOT EXISTS task_forks(id TEXT PRIMARY KEY,parent_task_id TEXT NOT NULL,child_task_id TEXT NOT NULL,checkpoint_id TEXT,created_at TEXT NOT NULL,metadata_json TEXT NOT NULL,UNIQUE(child_task_id));
 CREATE INDEX IF NOT EXISTS ix_task_forks_parent ON task_forks(parent_task_id,created_at);
+CREATE TABLE IF NOT EXISTS agent_children(id TEXT PRIMARY KEY,parent_run_id TEXT NOT NULL,child_run_id TEXT NOT NULL UNIQUE,task_id TEXT NOT NULL,state TEXT NOT NULL,depth INTEGER NOT NULL DEFAULT 1,handoff_state TEXT NOT NULL DEFAULT 'ready',attempt INTEGER NOT NULL DEFAULT 1,max_retries INTEGER NOT NULL DEFAULT 2,retry_of TEXT,dependency_json TEXT NOT NULL DEFAULT '[]',result_json TEXT NOT NULL DEFAULT '{}',error_text TEXT NOT NULL DEFAULT '',metadata_json TEXT NOT NULL DEFAULT '{}',created_at TEXT NOT NULL,updated_at TEXT NOT NULL,finished_at TEXT);
+CREATE INDEX IF NOT EXISTS ix_agent_children_parent ON agent_children(parent_run_id,created_at);
+CREATE INDEX IF NOT EXISTS ix_agent_children_retry ON agent_children(parent_run_id,retry_of,attempt);
 CREATE TABLE IF NOT EXISTS snapshots(id INTEGER PRIMARY KEY AUTOINCREMENT,aggregate_type TEXT NOT NULL,aggregate_id TEXT NOT NULL,event_seq INTEGER NOT NULL,state_json TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS ix_snapshots_aggregate ON snapshots(aggregate_type,aggregate_id,event_seq DESC);
 CREATE TABLE IF NOT EXISTS migration_sources(path TEXT PRIMARY KEY,size_bytes INTEGER NOT NULL,modified_utc TEXT NOT NULL,sha256 TEXT NOT NULL,imported_at TEXT NOT NULL);
-INSERT OR REPLACE INTO schema_meta(key,value) VALUES('schema_version','5');
+INSERT OR REPLACE INTO schema_meta(key,value) VALUES('schema_version','11');
 ");
                 if (!db.Query("PRAGMA table_info(task_queue)").Any(row => string.Equals(Convert.ToString(row["name"]), "input_offset", StringComparison.OrdinalIgnoreCase)))
                     db.Execute("ALTER TABLE task_queue ADD COLUMN input_offset INTEGER NOT NULL DEFAULT 0");
                 EnsureScheduleColumns(db);
+                EnsureToolCallColumns(db);
+                EnsureAgentChildColumns(db);
                 if (db.ScalarString("SELECT value FROM schema_meta WHERE key='legacy_migration_complete'") != "1") MigrateLegacy(db);
             }
+        }
+
+        private static void EnsureToolCallColumns(SqliteDb db)
+        {
+            var columns = new HashSet<string>(db.Query("PRAGMA table_info(tool_calls)").Select(row => Convert.ToString(row["name"])), StringComparer.OrdinalIgnoreCase);
+            var additions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "input_meta_json", "TEXT NOT NULL DEFAULT '{}'" }, { "output_meta_json", "TEXT NOT NULL DEFAULT '{}'" },
+                { "terminal_reason", "TEXT" }, { "duration_ms", "INTEGER" }
+            };
+            foreach (var pair in additions) if (!columns.Contains(pair.Key)) db.Execute("ALTER TABLE tool_calls ADD COLUMN " + pair.Key + " " + pair.Value);
+        }
+
+        private static void EnsureAgentChildColumns(SqliteDb db)
+        {
+            var columns = new HashSet<string>(db.Query("PRAGMA table_info(agent_children)").Select(row => Convert.ToString(row["name"])), StringComparer.OrdinalIgnoreCase);
+            var additions = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                { "attempt", "INTEGER NOT NULL DEFAULT 1" }, { "max_retries", "INTEGER NOT NULL DEFAULT 2" }, { "retry_of", "TEXT" }, { "dependency_json", "TEXT NOT NULL DEFAULT '[]'" }
+            };
+            foreach (var pair in additions) if (!columns.Contains(pair.Key)) db.Execute("ALTER TABLE agent_children ADD COLUMN " + pair.Key + " " + pair.Value);
         }
 
         private static void EnsureScheduleColumns(SqliteDb db)
@@ -65,7 +95,7 @@ INSERT OR REPLACE INTO schema_meta(key,value) VALUES('schema_version','5');
             {
                 { "retry_count", "INTEGER NOT NULL DEFAULT 0" }, { "max_retries", "INTEGER NOT NULL DEFAULT 3" },
                 { "lease_until", "TEXT" }, { "claimed_by", "TEXT" }, { "last_error", "TEXT" },
-                { "dead_lettered_at", "TEXT" }, { "last_run_at", "TEXT" }
+                { "dead_lettered_at", "TEXT" }, { "last_run_at", "TEXT" }, { "active_run_id", "TEXT" }, { "last_run_id", "TEXT" }
             };
             foreach (var pair in additions) if (!columns.Contains(pair.Key)) db.Execute("ALTER TABLE schedules ADD COLUMN " + pair.Key + " " + pair.Value);
         }
@@ -83,7 +113,7 @@ INSERT OR REPLACE INTO schema_meta(key,value) VALUES('schema_version','5');
                     Directory.CreateDirectory(System.IO.Path.GetDirectoryName(target));
                     File.Copy(file, target, true);
                 }
-                catch (Exception error) { CrashLog.Write("EventStoreBackup", error); }
+                catch (Exception error) { CrashLog.Handled("EventStoreBackup", error); }
             }
             db.Execute("BEGIN IMMEDIATE");
             try
@@ -220,14 +250,145 @@ ON CONFLICT(id) DO UPDATE SET workspace_path=excluded.workspace_path,title=exclu
 VALUES(?1,?2,NULLIF(?3,''),?4,?5,?6,'native',?7,?8,?9,?9,'{}')
 ON CONFLICT(id) DO UPDATE SET state=excluded.state,worker_kind='native',worker_pid=excluded.worker_pid,lease_until=excluded.lease_until,updated_at=excluded.updated_at",
                     id, taskId, requestId, model, workspace, state, workerPid, DateTimeOffset.Now.AddSeconds(8).ToString("o"), now);
+                db.Execute("UPDATE agent_children SET state=?2,updated_at=?3 WHERE child_run_id=?1 AND state NOT IN ('completed','failed','cancelled')", id, state, now);
+                UpdateTaskStateForRun(db, id, state, now);
             }
         }
 
         public void UpdateRunState(string id, string state, int workerPid, string details)
         {
             lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var now = ProviderStore.NowIso();
                 db.Execute("UPDATE runs SET state=?2,worker_pid=?3,lease_until=?4,updated_at=?5,source_json=?6 WHERE id=?1", id, state, workerPid,
-                    DateTimeOffset.Now.AddSeconds(8).ToString("o"), ProviderStore.NowIso(), details ?? "{}");
+                    DateTimeOffset.Now.AddSeconds(8).ToString("o"), now, details ?? "{}");
+                db.Execute("UPDATE agent_children SET state=?2,updated_at=?3 WHERE child_run_id=?1 AND state NOT IN ('completed','failed','cancelled')", id, state, now);
+                UpdateTaskStateForRun(db, id, state, now);
+                if (state == JobStates.Completed || state == JobStates.Failed || state == JobStates.Cancelled)
+                {
+                    var child = db.Query("SELECT id FROM agent_children WHERE child_run_id=?1", id).FirstOrDefault();
+                    if (child != null)
+                    {
+                        var error = ""; var result = details ?? "{}";
+                        try
+                        {
+                            var parsed = JObject.Parse(result);
+                            error = (string)parsed["result"] ?? (string)parsed["message"] ?? (string)parsed["error"] ?? "";
+                        }
+                        catch { error = result; }
+                        bool redacted; error = ToolRuntimePolicy.RedactAndLimit(error, 65536, out redacted);
+                        db.Execute(@"UPDATE agent_children SET state=?2,handoff_state='ready',
+result_json=CASE WHEN result_json IS NULL OR result_json='' OR result_json='{}' THEN ?3 ELSE result_json END,
+error_text=CASE WHEN error_text IS NULL OR error_text='' THEN ?4 ELSE error_text END,
+updated_at=?5,finished_at=COALESCE(finished_at,?5) WHERE child_run_id=?1", id, state, result, state == JobStates.Completed ? "" : error, now);
+                    }
+                }
+            }
+        }
+
+        public string TaskState(string id)
+        {
+            lock (_gate) using (var db = SqliteDb.Open(_path)) return db.ScalarString("SELECT state FROM tasks WHERE id=?1", id) ?? "";
+        }
+
+        private static void UpdateTaskStateForRun(SqliteDb db, string runId, string requestedState, string now)
+        {
+            var run = db.Query("SELECT task_id FROM runs WHERE id=?1", runId).FirstOrDefault();
+            if (run == null) return;
+            var taskId = Convert.ToString(run["task_id"]);
+            if (string.IsNullOrWhiteSpace(taskId)) return;
+            var state = requestedState ?? JobStates.Running;
+            if (state == JobStates.Completed || state == JobStates.Failed || state == JobStates.Cancelled)
+            {
+                var active = db.Query(@"SELECT state FROM runs WHERE task_id=?1 AND id<>?2
+AND state IN ('queued','starting','running','waiting','waiting_approval','waiting_user','paused')
+ORDER BY updated_at DESC LIMIT 1", taskId, runId).FirstOrDefault();
+                if (active != null) state = Convert.ToString(active["state"]);
+            }
+            db.Execute("UPDATE tasks SET state=?2,updated_at=?3 WHERE id=?1", taskId, state, now);
+        }
+
+        public JObject CreateChildAgent(string parentRunId, string childRunId, string taskId, int depth, JObject metadata)
+        {
+            parentRunId = parentRunId ?? ""; childRunId = childRunId ?? ""; taskId = taskId ?? "";
+            var now = ProviderStore.NowIso(); var id = "child:" + childRunId;
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var parent = db.Query("SELECT id FROM runs WHERE id=?1", parentRunId);
+                if (parent.Count == 0) throw new InvalidOperationException("Parent Run does not exist.");
+                var active = db.ScalarInt64("SELECT COUNT(*) FROM agent_children WHERE parent_run_id=?1 AND state IN ('starting','running','waiting','paused')", parentRunId);
+                if (active >= 4) throw new InvalidOperationException("Parent Agent has reached its child concurrency limit.");
+                metadata = metadata ?? new JObject();
+                var attempt = Math.Max(1, (int?)metadata["attempt"] ?? 1); var maxRetries = Math.Max(0, Math.Min(10, (int?)metadata["maxRetries"] ?? 2));
+                var retryOf = (string)metadata["retryOf"] ?? ""; var dependencies = metadata["dependencies"] as JArray ?? new JArray();
+                foreach (var dependency in dependencies.Values<string>().Where(value => !string.IsNullOrWhiteSpace(value)))
+                {
+                    var dependencyState = db.ScalarString("SELECT state FROM agent_children WHERE (id=?1 OR child_run_id=?1) AND parent_run_id=?2", dependency, parentRunId);
+                    if (!string.Equals(dependencyState, JobStates.Completed, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("Child Agent dependency is not completed: " + dependency);
+                }
+                db.Execute("INSERT INTO agent_children(id,parent_run_id,child_run_id,task_id,state,depth,handoff_state,attempt,max_retries,retry_of,dependency_json,result_json,error_text,metadata_json,created_at,updated_at) VALUES(?1,?2,?3,?4,'starting',?5,'pending',?6,?7,NULLIF(?8,''),?9,'{}','',?10,?11,?11)",
+                    id, parentRunId, childRunId, taskId, Math.Max(1, depth), attempt, maxRetries, retryOf, dependencies.ToString(Formatting.None), metadata.ToString(Formatting.None), now);
+            }
+            return new JObject { ["id"] = id, ["parentRunId"] = parentRunId, ["childRunId"] = childRunId, ["taskId"] = taskId, ["state"] = "starting", ["depth"] = depth, ["attempt"] = (int?)metadata?["attempt"] ?? 1, ["maxRetries"] = (int?)metadata?["maxRetries"] ?? 2, ["retryOf"] = metadata?["retryOf"], ["handoffState"] = "pending", ["createdAt"] = now };
+        }
+
+        public JObject ChildAgent(string id)
+        {
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var rows = db.Query("SELECT * FROM agent_children WHERE id=?1 OR child_run_id=?1", id ?? "");
+                return rows.Count == 0 ? null : ChildAgentRow(rows[0]);
+            }
+        }
+
+        public JArray ListChildAgents(string parentRunId)
+        {
+            lock (_gate) using (var db = SqliteDb.Open(_path)) return new JArray(db.Query("SELECT * FROM agent_children WHERE parent_run_id=?1 ORDER BY created_at", parentRunId ?? "").Select(ChildAgentRow));
+        }
+
+        public JObject AcceptChildHandoff(string id, string parentRunId)
+        {
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var rows = db.Query("SELECT * FROM agent_children WHERE (id=?1 OR child_run_id=?1) AND parent_run_id=?2", id ?? "", parentRunId ?? "");
+                if (rows.Count == 0) return null;
+                var row = rows[0]; var childId = Convert.ToString(row["child_run_id"]); var now = ProviderStore.NowIso();
+                if (Convert.ToString(row["state"]) != JobStates.Completed) throw new InvalidOperationException("Only a completed child Agent can be handed off.");
+                db.Execute("UPDATE agent_children SET handoff_state='accepted',updated_at=?2 WHERE child_run_id=?1", childId, now);
+                JObject result = ChildAgentRow(row); result["handoffState"] = "accepted"; return result;
+            }
+        }
+
+        public JObject PrepareChildRetry(string id, string parentRunId)
+        {
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var rows = db.Query("SELECT * FROM agent_children WHERE (id=?1 OR child_run_id=?1) AND parent_run_id=?2", id ?? "", parentRunId ?? "");
+                if (rows.Count == 0) return null;
+                var row = rows[0]; var state = Convert.ToString(row["state"]); if (state != JobStates.Failed && state != JobStates.Cancelled) throw new InvalidOperationException("Only a failed or cancelled child Agent can be retried.");
+                var attempt = Convert.ToInt32(row["attempt"]); var maxRetries = Convert.ToInt32(row["max_retries"]); if (attempt > maxRetries) throw new InvalidOperationException("Child Agent retry limit has been reached.");
+                var request = JsonUtil.Read(System.IO.Path.Combine(AppPaths.Runs, Convert.ToString(row["child_run_id"]), "request.json"), new JObject()) as JObject ?? new JObject();
+                if (request.Count == 0) throw new InvalidOperationException("The failed child request is unavailable.");
+                return new JObject
+                {
+                    ["parentRunId"] = parentRunId, ["prompt"] = request["prompt"], ["childName"] = request["childName"],
+                    ["retryOf"] = Convert.ToString(row["child_run_id"]), ["attempt"] = attempt + 1, ["maxRetries"] = maxRetries,
+                    ["dependencies"] = ParseJson(Convert.ToString(row["dependency_json"])) ?? new JArray(), ["sourceChild"] = ChildAgentRow(row)
+                };
+            }
+        }
+
+        private static JObject ChildAgentRow(Dictionary<string, object> row)
+        {
+            return new JObject
+            {
+                ["id"] = Convert.ToString(row["id"]), ["parentRunId"] = Convert.ToString(row["parent_run_id"]), ["childRunId"] = Convert.ToString(row["child_run_id"]),
+                ["taskId"] = Convert.ToString(row["task_id"]), ["state"] = Convert.ToString(row["state"]), ["depth"] = Convert.ToInt32(row["depth"]),
+                ["handoffState"] = Convert.ToString(row["handoff_state"]), ["attempt"] = row.ContainsKey("attempt") ? Convert.ToInt32(row["attempt"]) : 1, ["maxRetries"] = row.ContainsKey("max_retries") ? Convert.ToInt32(row["max_retries"]) : 2,
+                ["retryOf"] = Convert.ToString(row.ContainsKey("retry_of") ? row["retry_of"] : null), ["dependencies"] = ParseJson(Convert.ToString(row.ContainsKey("dependency_json") ? row["dependency_json"] : "[]")),
+                ["result"] = ParseJson(Convert.ToString(row["result_json"])), ["error"] = Convert.ToString(row["error_text"]),
+                ["metadata"] = ParseJson(Convert.ToString(row["metadata_json"])), ["createdAt"] = Convert.ToString(row["created_at"]), ["updatedAt"] = Convert.ToString(row["updated_at"]), ["finishedAt"] = Convert.ToString(row["finished_at"])
+            };
         }
 
         public void RecordApproval(string id, string runId, string toolName, string state, JToken input, JToken decision)
@@ -240,6 +401,26 @@ VALUES(?1,?2,?3,?4,?5,?6,?7,?7)
 ON CONFLICT(id) DO UPDATE SET state=excluded.state,decision_json=excluded.decision_json,updated_at=excluded.updated_at",
                     id, runId, toolName, state, input == null ? "{}" : input.ToString(Formatting.None), decision == null ? "{}" : decision.ToString(Formatting.None), now);
             }
+        }
+
+        public JArray ListOpenApprovals()
+        {
+            lock (_gate) using (var db = SqliteDb.Open(_path)) return new JArray(db.Query(
+                "SELECT id,run_id,tool_name,state,input_json,decision_json,created_at,updated_at FROM approvals WHERE state IN ('pending','allow','deny') ORDER BY created_at")
+                .Select(row => new JObject
+                {
+                    ["id"] = Convert.ToString(row["id"]), ["runId"] = Convert.ToString(row["run_id"]),
+                    ["toolName"] = Convert.ToString(row["tool_name"]), ["state"] = Convert.ToString(row["state"]),
+                    ["input"] = ParseJson(Convert.ToString(row["input_json"])) ?? new JObject(),
+                    ["decision"] = ParseJson(Convert.ToString(row["decision_json"])) ?? new JObject(),
+                    ["createdAt"] = Convert.ToString(row["created_at"]), ["updatedAt"] = Convert.ToString(row["updated_at"])
+                }));
+        }
+
+        public void CloseApproval(string id, string state)
+        {
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+                db.Execute("UPDATE approvals SET state=?2,updated_at=?3 WHERE id=?1", id ?? "", state ?? "consumed", ProviderStore.NowIso());
         }
 
         public JObject RecordFork(string parentTaskId, string childTaskId, string checkpointId, JObject metadata)
@@ -307,7 +488,7 @@ ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,state=CASE WHEN schedules
                 try
                 {
                     var stamp = now.ToUniversalTime().ToString("o");
-                    db.Execute("UPDATE schedules SET state='retry',claimed_by=NULL,lease_until=NULL,updated_at=?1,last_error=CASE WHEN COALESCE(last_error,'')='' THEN 'Host lease expired; execution recovered' ELSE last_error END WHERE state='running' AND lease_until IS NOT NULL AND lease_until<?1", stamp);
+                    db.Execute("UPDATE schedules SET state='retry',claimed_by=NULL,lease_until=NULL,active_run_id=NULL,updated_at=?1,last_error=CASE WHEN COALESCE(last_error,'')='' THEN 'Host lease expired; execution recovered' ELSE last_error END WHERE state='running' AND lease_until IS NOT NULL AND lease_until<?1", stamp);
                     var rows = db.Query("SELECT * FROM schedules WHERE state IN ('scheduled','retry') AND due_at<=?1 ORDER BY due_at,created_at LIMIT ?2", stamp, Math.Max(1, Math.Min(limit, 50)));
                     var claimed = new JArray(); var lease = now.AddMinutes(2).ToUniversalTime().ToString("o");
                     foreach (var row in rows)
@@ -322,37 +503,73 @@ ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,state=CASE WHEN schedules
             }
         }
 
-        public void CompleteSchedule(string id, bool success, string error, DateTimeOffset now)
+        public JObject BindScheduleRun(string id, string runId, string owner, DateTimeOffset now)
         {
             lock (_gate) using (var db = SqliteDb.Open(_path))
             {
-                var rows = db.Query("SELECT * FROM schedules WHERE id=?1", id); if (rows.Count == 0) return;
+                var stamp = now.ToUniversalTime().ToString("o"); var lease = now.AddMinutes(2).ToUniversalTime().ToString("o");
+                db.Execute("UPDATE schedules SET state='running',active_run_id=?2,last_run_id=?2,claimed_by=?3,lease_until=?4,last_run_at=?5,updated_at=?5 WHERE id=?1 AND state='running'", id ?? "", runId ?? "", owner ?? "", lease, stamp);
+                var rows = db.Query("SELECT * FROM schedules WHERE id=?1", id ?? ""); return rows.Count == 0 ? null : ScheduleItem(rows[0]);
+            }
+        }
+
+        public JObject RenewScheduleLease(string id, string owner, DateTimeOffset now)
+        {
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var stamp = now.ToUniversalTime().ToString("o"); var lease = now.AddMinutes(2).ToUniversalTime().ToString("o");
+                db.Execute("UPDATE schedules SET claimed_by=?2,lease_until=?3,updated_at=?4 WHERE id=?1 AND state='running'", id ?? "", owner ?? "", lease, stamp);
+                var rows = db.Query("SELECT * FROM schedules WHERE id=?1", id ?? ""); return rows.Count == 0 ? null : ScheduleItem(rows[0]);
+            }
+        }
+
+        public JArray ListRunningSchedules()
+        {
+            lock (_gate) using (var db = SqliteDb.Open(_path)) return new JArray(db.Query("SELECT * FROM schedules WHERE state='running' ORDER BY updated_at").Select(ScheduleItem));
+        }
+
+        public JObject GetRunSnapshot(string id)
+        {
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var rows = db.Query("SELECT id,state,worker_pid,source_json,updated_at FROM runs WHERE id=?1", id ?? "");
+                if (rows.Count == 0) return null; var row = rows[0];
+                return new JObject { ["id"] = Convert.ToString(row["id"]), ["state"] = Convert.ToString(row["state"]), ["workerPid"] = Convert.ToInt32(row["worker_pid"]), ["details"] = ParseJson(Convert.ToString(row["source_json"])), ["updatedAt"] = Convert.ToString(row["updated_at"]) };
+            }
+        }
+
+        public JObject CompleteSchedule(string id, bool success, string error, DateTimeOffset now)
+        {
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var rows = db.Query("SELECT * FROM schedules WHERE id=?1", id); if (rows.Count == 0) return null;
                 var row = rows[0]; var repeat = Convert.ToInt32(row["repeat_minutes"]); var retries = Convert.ToInt32(row["retry_count"]); var max = Convert.ToInt32(row["max_retries"]);
                 var stamp = now.ToUniversalTime().ToString("o");
                 if (success)
                 {
                     var state = repeat > 0 ? "scheduled" : "completed"; var due = repeat > 0 ? now.AddMinutes(repeat).ToUniversalTime().ToString("o") : Convert.ToString(row["due_at"]);
-                    db.Execute("UPDATE schedules SET state=?2,due_at=?3,retry_count=0,lease_until=NULL,claimed_by=NULL,last_error=NULL,last_run_at=?4,updated_at=?4 WHERE id=?1", id, state, due, stamp);
+                    db.Execute("UPDATE schedules SET state=?2,due_at=?3,retry_count=0,lease_until=NULL,claimed_by=NULL,active_run_id=NULL,last_error=NULL,last_run_at=?4,updated_at=?4 WHERE id=?1", id, state, due, stamp);
                 }
                 else if (retries < max)
                 {
                     var nextRetry = retries + 1; var delaySeconds = Math.Min(1800, 15 * (1 << Math.Min(nextRetry - 1, 7)));
-                    db.Execute("UPDATE schedules SET state='retry',due_at=?2,retry_count=?3,lease_until=NULL,claimed_by=NULL,last_error=?4,last_run_at=?5,updated_at=?5 WHERE id=?1", id, now.AddSeconds(delaySeconds).ToUniversalTime().ToString("o"), nextRetry, ScheduleLimit(error, 2000), stamp);
+                    db.Execute("UPDATE schedules SET state='retry',due_at=?2,retry_count=?3,lease_until=NULL,claimed_by=NULL,active_run_id=NULL,last_error=?4,last_run_at=?5,updated_at=?5 WHERE id=?1", id, now.AddSeconds(delaySeconds).ToUniversalTime().ToString("o"), nextRetry, ScheduleLimit(error, 2000), stamp);
                 }
-                else db.Execute("UPDATE schedules SET state='dead_letter',lease_until=NULL,claimed_by=NULL,last_error=?2,dead_lettered_at=?3,last_run_at=?3,updated_at=?3 WHERE id=?1", id, ScheduleLimit(error, 2000), stamp);
+                else db.Execute("UPDATE schedules SET state='dead_letter',lease_until=NULL,claimed_by=NULL,active_run_id=NULL,last_error=?2,dead_lettered_at=?3,last_run_at=?3,updated_at=?3 WHERE id=?1", id, ScheduleLimit(error, 2000), stamp);
+                return ScheduleItem(db.Query("SELECT * FROM schedules WHERE id=?1", id).First());
             }
         }
 
         public void DeferSchedule(string id, DateTimeOffset due, string reason)
         {
-            lock (_gate) using (var db = SqliteDb.Open(_path)) db.Execute("UPDATE schedules SET state='scheduled',due_at=?2,lease_until=NULL,claimed_by=NULL,last_error=?3,updated_at=?4 WHERE id=?1", id, due.ToUniversalTime().ToString("o"), ScheduleLimit(reason, 500), ProviderStore.NowIso());
+            lock (_gate) using (var db = SqliteDb.Open(_path)) db.Execute("UPDATE schedules SET state='scheduled',due_at=?2,lease_until=NULL,claimed_by=NULL,active_run_id=NULL,last_error=?3,updated_at=?4 WHERE id=?1", id, due.ToUniversalTime().ToString("o"), ScheduleLimit(reason, 500), ProviderStore.NowIso());
         }
 
         public bool ReplayDeadLetter(string id)
         {
             lock (_gate) using (var db = SqliteDb.Open(_path))
             {
-                db.Execute("UPDATE schedules SET state='scheduled',due_at=?2,retry_count=0,lease_until=NULL,claimed_by=NULL,last_error=NULL,dead_lettered_at=NULL,updated_at=?2 WHERE id=?1 AND state='dead_letter'", id, ProviderStore.NowIso());
+                db.Execute("UPDATE schedules SET state='scheduled',due_at=?2,retry_count=0,lease_until=NULL,claimed_by=NULL,active_run_id=NULL,last_error=NULL,dead_lettered_at=NULL,updated_at=?2 WHERE id=?1 AND state='dead_letter'", id, ProviderStore.NowIso());
                 return db.ScalarInt64("SELECT changes()") == 1;
             }
         }
@@ -365,11 +582,12 @@ ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,state=CASE WHEN schedules
             payload["enabled"] = state == "scheduled" || state == "retry" || state == "running"; payload["state"] = state;
             payload["retryCount"] = Convert.ToInt32(row["retry_count"]); payload["maxRetries"] = Convert.ToInt32(row["max_retries"]);
             payload["lastError"] = Convert.ToString(row["last_error"]); payload["lastRunAt"] = Convert.ToString(row["last_run_at"]); payload["leaseUntil"] = Convert.ToString(row["lease_until"]);
+            payload["activeRunId"] = Convert.ToString(row.ContainsKey("active_run_id") ? row["active_run_id"] : null); payload["lastRunId"] = Convert.ToString(row.ContainsKey("last_run_id") ? row["last_run_id"] : null);
             return payload;
         }
 
         private static string SafeIdentifier(string value) { return new string((value ?? "").Where(ch => char.IsLetterOrDigit(ch) || ch == '-' || ch == '_').Take(120).ToArray()); }
-        private static string ScheduleLimit(string value, int max) { value = value ?? ""; return value.Length <= max ? value : value.Substring(0, max); }
+        private static string ScheduleLimit(string value, int max) { bool ignored; return ToolRuntimePolicy.RedactAndLimit(value ?? "", max, out ignored); }
 
         public JObject Enqueue(string taskId, string prompt, string kind, JObject payload)
         {
@@ -459,17 +677,29 @@ ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,state=CASE WHEN schedules
             };
         }
 
-        public long AppendWorkerEvent(string runId, string taskId, string payload, string eventId = null)
+        public long AppendWorkerEvent(string runId, string taskId, string payload, string eventId = null, JObject toolRuntimePolicy = null)
+        {
+            return AppendWorkerEvents(runId, taskId,
+                new[] { new KeyValuePair<string, string>(eventId, payload) }, toolRuntimePolicy);
+        }
+
+        public long AppendWorkerEvents(string runId, string taskId, IEnumerable<KeyValuePair<string, string>> events, JObject toolRuntimePolicy = null)
         {
             lock (_gate) using (var db = SqliteDb.Open(_path))
             {
                 db.Execute("BEGIN IMMEDIATE");
                 try
                 {
-                    var stableId = string.IsNullOrWhiteSpace(eventId) ? "native:" + runId + ":" + Guid.NewGuid().ToString("N") : eventId;
                     var now = ProviderStore.NowIso();
-                    var next = AppendEvent(db, runId, taskId, null, "claude-stream", payload, stableId, now);
-                    NormalizeToolCalls(db, runId, taskId, payload, now);
+                    long next = 0;
+                    foreach (var item in events ?? Enumerable.Empty<KeyValuePair<string, string>>())
+                    {
+                        var stableId = string.IsNullOrWhiteSpace(item.Key) ? "native:" + runId + ":" + Guid.NewGuid().ToString("N") : item.Key;
+                        var payload = item.Value ?? "";
+                        var persistedPayload = ToolRuntimePolicy.SanitizeWorkerEvent(payload, toolRuntimePolicy);
+                        next = AppendEvent(db, runId, taskId, null, "claude-stream", persistedPayload, stableId, now);
+                        NormalizeToolCalls(db, runId, taskId, payload, now, toolRuntimePolicy);
+                    }
                     db.Execute("COMMIT"); return next;
                 }
                 catch { try { db.Execute("ROLLBACK"); } catch { } throw; }
@@ -498,19 +728,58 @@ ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,state=CASE WHEN schedules
 
         public JArray ReadToolCalls(string runId)
         {
-            lock (_gate) using (var db = SqliteDb.Open(_path)) return new JArray(db.Query("SELECT id,tool_name,state,input_json,output_json,error_text,started_at,updated_at FROM tool_calls WHERE run_id=?1 ORDER BY started_at", runId).Select(row => new JObject
+            lock (_gate) using (var db = SqliteDb.Open(_path)) return new JArray(db.Query("SELECT id,tool_name,state,input_json,output_json,error_text,input_meta_json,output_meta_json,terminal_reason,duration_ms,started_at,updated_at FROM tool_calls WHERE run_id=?1 ORDER BY started_at", runId).Select(row => new JObject
             {
                 ["id"] = Convert.ToString(row["id"]), ["toolName"] = Convert.ToString(row["tool_name"]), ["state"] = Convert.ToString(row["state"]),
                 ["input"] = ParseJson(Convert.ToString(row["input_json"])), ["output"] = ParseJson(Convert.ToString(row["output_json"])),
-                ["error"] = Convert.ToString(row["error_text"]), ["startedAt"] = Convert.ToString(row["started_at"]), ["updatedAt"] = Convert.ToString(row["updated_at"])
+                ["error"] = Convert.ToString(row["error_text"]), ["inputPersistence"] = ParseJson(Convert.ToString(row["input_meta_json"])),
+                ["outputPersistence"] = ParseJson(Convert.ToString(row["output_meta_json"])), ["terminalReason"] = Convert.ToString(row["terminal_reason"]),
+                ["durationMs"] = row["duration_ms"] == null ? 0L : Convert.ToInt64(row["duration_ms"]),
+                ["startedAt"] = Convert.ToString(row["started_at"]), ["updatedAt"] = Convert.ToString(row["updated_at"])
             }));
+        }
+
+        public int TransitionActiveToolCalls(string runId, string state, string reason)
+        {
+            var allowed = new[] { "failed", "cancelled", "timed_out" };
+            if (!allowed.Contains(state, StringComparer.Ordinal)) throw new ArgumentException("Unsupported terminal ToolCall state.", "state");
+            bool ignored; reason = ToolRuntimePolicy.RedactAndLimit(reason ?? "", 32768, out ignored);
+            var now = ProviderStore.NowIso();
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                db.Execute(@"UPDATE tool_calls SET state=?2,error_text=?3,terminal_reason=?3,
+duration_ms=MAX(0,CAST((julianday(?4)-julianday(started_at))*86400000 AS INTEGER)),updated_at=?4 WHERE run_id=?1 AND state='running'", runId, state, reason, now);
+                return (int)db.ScalarInt64("SELECT changes()");
+            }
+        }
+
+        public JArray MarkTimedOutToolCalls(string runId, int maxDurationSeconds)
+        {
+            var now = DateTimeOffset.Now; var cutoff = now.AddSeconds(-Math.Max(0, maxDurationSeconds)); var result = new JArray();
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                foreach (var row in db.Query("SELECT id,tool_name,started_at FROM tool_calls WHERE run_id=?1 AND state='running' ORDER BY started_at", runId))
+                {
+                    DateTimeOffset started;
+                    if (!DateTimeOffset.TryParse(Convert.ToString(row["started_at"]), out started) || started > cutoff) continue;
+                    var id = Convert.ToString(row["id"]); var elapsed = Math.Max(0L, (long)(now - started).TotalMilliseconds);
+                    var reason = "Tool exceeded the " + maxDurationSeconds + " second runtime limit.";
+                    db.Execute("UPDATE tool_calls SET state='timed_out',error_text=?2,terminal_reason=?2,duration_ms=?3,updated_at=?4 WHERE id=?1 AND state='running'", id, reason, elapsed, now.ToString("o"));
+                    if (db.ScalarInt64("SELECT changes()") == 1) result.Add(new JObject { ["id"] = id, ["toolName"] = Convert.ToString(row["tool_name"]), ["durationMs"] = elapsed, ["reason"] = reason });
+                }
+            }
+            return result;
         }
 
         public void RecordContext(string runId, string taskId, string sourceType, string label, string content, JObject metadata)
         {
-            content = content ?? ""; var hash = Sha256Text(content); var id = "context:" + runId + ":" + sourceType + ":" + hash.Substring(0, 16);
+            content = content ?? ""; var hash = Sha256Text(content);
+            var identity = ((string)metadata?["memoryId"] ?? "").Trim();
+            var identityHash = identity.Length == 0 ? hash : Sha256Text(identity);
+            var id = "context:" + runId + ":" + sourceType + ":" + identityHash.Substring(0, 16);
+            var estimatedTokens = Math.Max(0L, (long?)metadata?["estimatedTokens"] ?? EstimateTokens(content));
             lock (_gate) using (var db = SqliteDb.Open(_path)) db.Execute("INSERT OR REPLACE INTO context_entries(id,run_id,task_id,source_type,label,estimated_tokens,content_sha256,metadata_json,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-                id, runId, taskId, sourceType, label ?? "", EstimateTokens(content), hash, (metadata ?? new JObject()).ToString(Formatting.None), ProviderStore.NowIso());
+                id, runId, taskId, sourceType, label ?? "", estimatedTokens, hash, (metadata ?? new JObject()).ToString(Formatting.None), ProviderStore.NowIso());
         }
 
         public JObject ContextReport(string runId)
@@ -518,27 +787,231 @@ ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,state=CASE WHEN schedules
             lock (_gate) using (var db = SqliteDb.Open(_path))
             {
                 var rows = db.Query("SELECT source_type,label,estimated_tokens,content_sha256,metadata_json,created_at FROM context_entries WHERE run_id=?1 ORDER BY created_at", runId);
+                var sources = new JArray(rows.Select(row => new JObject { ["type"] = Convert.ToString(row["source_type"]), ["label"] = Convert.ToString(row["label"]), ["estimatedTokens"] = Convert.ToInt64(row["estimated_tokens"]), ["sha256"] = Convert.ToString(row["content_sha256"]), ["metadata"] = ParseJson(Convert.ToString(row["metadata_json"])), ["createdAt"] = Convert.ToString(row["created_at"]) }));
+                var budget = sources.OfType<JObject>().FirstOrDefault(source => string.Equals((string)source["type"], "context-budget", StringComparison.Ordinal));
                 return new JObject
                 {
                     ["runId"] = runId, ["estimatedTokens"] = rows.Sum(row => Convert.ToInt64(row["estimated_tokens"])),
-                    ["sources"] = new JArray(rows.Select(row => new JObject { ["type"] = Convert.ToString(row["source_type"]), ["label"] = Convert.ToString(row["label"]), ["estimatedTokens"] = Convert.ToInt64(row["estimated_tokens"]), ["sha256"] = Convert.ToString(row["content_sha256"]), ["metadata"] = ParseJson(Convert.ToString(row["metadata_json"])), ["createdAt"] = Convert.ToString(row["created_at"]) }))
+                    ["sources"] = sources,
+                    ["budget"] = budget?["metadata"]?.DeepClone()
                 };
             }
         }
 
-        public JObject RecordArtifact(string taskId, string runId, string kind, string path, string mimeType, JObject metadata)
+        public JObject RecordProviderOutcome(string providerId, string model, bool success, string failureKind, string message, long latencyMs, int cooldownSeconds, string evidence)
         {
-            var full = string.IsNullOrWhiteSpace(path) ? "" : System.IO.Path.GetFullPath(path); var size = File.Exists(full) ? new FileInfo(full).Length : 0L;
-            var sha = File.Exists(full) ? FileSha256(full) : ""; var id = "artifact:" + runId + ":" + Guid.NewGuid().ToString("N");
-            lock (_gate) using (var db = SqliteDb.Open(_path)) db.Execute("INSERT INTO artifacts(id,task_id,run_id,kind,path,mime_type,size_bytes,sha256,metadata_json,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-                id, taskId, runId, kind, full, mimeType ?? "application/octet-stream", size, sha, (metadata ?? new JObject()).ToString(Formatting.None), ProviderStore.NowIso());
-            return new JObject { ["id"] = id, ["kind"] = kind, ["path"] = full, ["mimeType"] = mimeType, ["size"] = size, ["sha256"] = sha };
+            return RecordProviderHealth(providerId, model, true, success, failureKind, message, latencyMs, cooldownSeconds, evidence);
         }
 
-        public JArray ListArtifacts(string runId)
+        public JObject RecordProviderProbe(string providerId, bool success, string failureKind, string message, long latencyMs, int cooldownSeconds, string evidence)
         {
-            lock (_gate) using (var db = SqliteDb.Open(_path)) return new JArray(db.Query("SELECT id,kind,path,mime_type,size_bytes,sha256,metadata_json,created_at FROM artifacts WHERE run_id=?1 ORDER BY created_at", runId).Select(row => new JObject
-            { ["id"] = Convert.ToString(row["id"]), ["kind"] = Convert.ToString(row["kind"]), ["path"] = Convert.ToString(row["path"]), ["mimeType"] = Convert.ToString(row["mime_type"]), ["size"] = Convert.ToInt64(row["size_bytes"]), ["sha256"] = Convert.ToString(row["sha256"]), ["metadata"] = ParseJson(Convert.ToString(row["metadata_json"])), ["createdAt"] = Convert.ToString(row["created_at"]) }));
+            return RecordProviderHealth(providerId, "*", false, success, failureKind, message, latencyMs, cooldownSeconds, evidence);
+        }
+
+        private JObject RecordProviderHealth(string providerId, string model, bool execution, bool success, string failureKind, string message, long latencyMs, int cooldownSeconds, string evidence)
+        {
+            providerId = (providerId ?? "").Trim(); model = string.IsNullOrWhiteSpace(model) ? "*" : model.Trim();
+            if (providerId.Length == 0) return new JObject();
+            var now = DateTimeOffset.Now; var stamp = now.ToString("o");
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var rows = db.Query("SELECT * FROM provider_health WHERE provider_id=?1 AND model_id=?2", providerId, model);
+                var row = rows.Count > 0 ? rows[0] : new Dictionary<string, object>();
+                var consecutive = Value(row, "consecutive_failures");
+                var successCount = Value(row, "success_count"); var failureCount = Value(row, "failure_count");
+                var probeSuccess = Value(row, "probe_success_count"); var probeFailure = Value(row, "probe_failure_count");
+                var previousState = Convert.ToString(row.ContainsKey("state") ? row["state"] : null);
+                string state; string cooldown = null;
+                if (execution)
+                {
+                    if (success) { consecutive = 0; successCount++; state = "healthy"; }
+                    else
+                    {
+                        consecutive++; failureCount++;
+                        var permanentlyUnavailable = string.Equals(failureKind, "model_unavailable", StringComparison.OrdinalIgnoreCase);
+                        cooldown = permanentlyUnavailable ? null : cooldownSeconds > 0 ? now.AddSeconds(cooldownSeconds).ToString("o") : null;
+                        state = permanentlyUnavailable ? "unavailable" : cooldown == null ? "degraded" : "cooling";
+                    }
+                }
+                else
+                {
+                    if (success) probeSuccess++; else probeFailure++;
+                    if (success) state = previousState == "healthy" ? "healthy" : "reachable";
+                    else
+                    {
+                        cooldown = cooldownSeconds > 0 ? now.AddSeconds(cooldownSeconds).ToString("o") : Convert.ToString(row.ContainsKey("cooldown_until") ? row["cooldown_until"] : null);
+                        state = previousState == "healthy" ? "degraded" : cooldown == null ? "probe_failed" : "cooling";
+                    }
+                }
+                var safeMessage = SecretRedactor.Redact(message ?? "");
+                if (safeMessage.Length > 1600) safeMessage = safeMessage.Substring(0, 1600);
+                db.Execute(@"INSERT INTO provider_health(provider_id,model_id,state,consecutive_failures,success_count,failure_count,probe_success_count,probe_failure_count,last_latency_ms,last_success_at,last_failure_at,last_probe_at,cooldown_until,failure_kind,last_error,evidence,updated_at)
+VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17)
+ON CONFLICT(provider_id,model_id) DO UPDATE SET state=excluded.state,consecutive_failures=excluded.consecutive_failures,success_count=excluded.success_count,failure_count=excluded.failure_count,probe_success_count=excluded.probe_success_count,probe_failure_count=excluded.probe_failure_count,last_latency_ms=excluded.last_latency_ms,last_success_at=COALESCE(excluded.last_success_at,provider_health.last_success_at),last_failure_at=COALESCE(excluded.last_failure_at,provider_health.last_failure_at),last_probe_at=COALESCE(excluded.last_probe_at,provider_health.last_probe_at),cooldown_until=excluded.cooldown_until,failure_kind=excluded.failure_kind,last_error=excluded.last_error,evidence=excluded.evidence,updated_at=excluded.updated_at",
+                    providerId, model, state, consecutive, successCount, failureCount, probeSuccess, probeFailure, Math.Max(0L, latencyMs),
+                    execution && success ? stamp : null, execution && !success ? stamp : null, execution ? null : stamp, cooldown,
+                    success ? "" : failureKind ?? "unknown", success ? "" : safeMessage, evidence ?? (execution ? "run-result" : "model-list"), stamp);
+                return ProviderHealthItem(db.Query("SELECT * FROM provider_health WHERE provider_id=?1 AND model_id=?2", providerId, model).First(), now);
+            }
+        }
+
+        public JArray ListProviderHealth(string providerId = "")
+        {
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var rows = string.IsNullOrWhiteSpace(providerId)
+                    ? db.Query("SELECT * FROM provider_health ORDER BY provider_id,model_id")
+                    : db.Query("SELECT * FROM provider_health WHERE provider_id=?1 ORDER BY model_id", providerId);
+                var now = DateTimeOffset.Now;
+                return new JArray(rows.Select(row => ProviderHealthItem(row, now)));
+            }
+        }
+
+        public JObject GetProviderHealth(string providerId, string model)
+        {
+            if (string.IsNullOrWhiteSpace(providerId) || string.IsNullOrWhiteSpace(model)) return null;
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var rows = db.Query("SELECT * FROM provider_health WHERE provider_id=?1 AND model_id=?2", providerId.Trim(), model.Trim());
+                return rows.Count == 0 ? null : ProviderHealthItem(rows[0], DateTimeOffset.Now);
+            }
+        }
+
+        public void DeleteProviderHealth(string providerId)
+        {
+            if (string.IsNullOrWhiteSpace(providerId)) return;
+            lock (_gate) using (var db = SqliteDb.Open(_path)) db.Execute("DELETE FROM provider_health WHERE provider_id=?1", providerId);
+        }
+
+        public int PruneProviderHealth(IEnumerable<string> configuredProviderIds)
+        {
+            var allowed = new HashSet<string>((configuredProviderIds ?? Enumerable.Empty<string>())
+                .Select(value => (value ?? "").Trim()).Where(value => value.Length > 0), StringComparer.Ordinal);
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var stale = db.Query("SELECT DISTINCT provider_id FROM provider_health")
+                    .Select(row => Convert.ToString(row["provider_id"]))
+                    .Where(value => !allowed.Contains(value)).ToArray();
+                foreach (var providerId in stale) db.Execute("DELETE FROM provider_health WHERE provider_id=?1", providerId);
+                return stale.Length;
+            }
+        }
+
+        private static JObject ProviderHealthItem(Dictionary<string, object> row, DateTimeOffset now)
+        {
+            var state = Convert.ToString(row["state"]); var cooldownText = Convert.ToString(row["cooldown_until"]); DateTimeOffset cooldown;
+            var cooling = DateTimeOffset.TryParse(cooldownText, out cooldown) && cooldown > now;
+            if (state == "cooling" && !cooling) state = Value(row, "consecutive_failures") > 0 ? "degraded" : Value(row, "probe_failure_count") > 0 ? "probe_failed" : "unknown";
+            return new JObject
+            {
+                ["providerId"] = Convert.ToString(row["provider_id"]), ["model"] = Convert.ToString(row["model_id"]), ["state"] = state,
+                ["available"] = !cooling && state != "unavailable", ["consecutiveFailures"] = Value(row, "consecutive_failures"),
+                ["successCount"] = Value(row, "success_count"), ["failureCount"] = Value(row, "failure_count"),
+                ["probeSuccessCount"] = Value(row, "probe_success_count"), ["probeFailureCount"] = Value(row, "probe_failure_count"),
+                ["lastLatencyMs"] = Value(row, "last_latency_ms"), ["lastSuccessAt"] = Convert.ToString(row["last_success_at"]),
+                ["lastFailureAt"] = Convert.ToString(row["last_failure_at"]), ["lastProbeAt"] = Convert.ToString(row["last_probe_at"]),
+                ["cooldownUntil"] = cooldownText, ["cooldownRemainingSeconds"] = cooling ? Math.Max(1, (long)Math.Ceiling((cooldown - now).TotalSeconds)) : 0L,
+                ["failureKind"] = Convert.ToString(row["failure_kind"]), ["lastError"] = Convert.ToString(row["last_error"]),
+                ["evidence"] = Convert.ToString(row["evidence"]), ["updatedAt"] = Convert.ToString(row["updated_at"])
+            };
+        }
+
+        private static long Value(Dictionary<string, object> row, string key)
+        {
+            return row != null && row.ContainsKey(key) && row[key] != null ? Convert.ToInt64(row[key]) : 0L;
+        }
+
+        public JObject SaveWorkspaceMemory(string workspace, string id, string title, string content, bool active)
+        {
+            workspace = NormalizeWorkspace(workspace);
+            title = (title ?? "").Trim();
+            content = (content ?? "").Trim();
+            if (title.Length == 0 || title.Length > 120) throw new InvalidOperationException("记忆标题必须为 1–120 个字符");
+            if (content.Length == 0 || content.Length > 8000) throw new InvalidOperationException("记忆正文必须为 1–8,000 个字符");
+            Guid parsed;
+            if (string.IsNullOrWhiteSpace(id)) id = Guid.NewGuid().ToString();
+            else if (!Guid.TryParse(id, out parsed)) throw new InvalidOperationException("记忆 ID 无效");
+            var state = active ? "active" : "inactive";
+            var now = ProviderStore.NowIso();
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                if (active) ValidateMemoryCapacity(db, workspace, id, content.Length);
+                db.Execute(@"INSERT INTO workspace_memories(id,workspace_path,title,content,state,source,created_at,updated_at)
+VALUES(?1,?2,?3,?4,?5,'manual',?6,?6)
+ON CONFLICT(id) DO UPDATE SET workspace_path=excluded.workspace_path,title=excluded.title,content=excluded.content,state=excluded.state,updated_at=excluded.updated_at",
+                    id, workspace, title, content, state, now);
+                return MemoryItem(db.Query("SELECT * FROM workspace_memories WHERE id=?1", id).First());
+            }
+        }
+
+        public JArray ListWorkspaceMemories(string workspace, bool includeInactive)
+        {
+            workspace = NormalizeWorkspace(workspace);
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var rows = includeInactive
+                    ? db.Query("SELECT * FROM workspace_memories WHERE workspace_path=?1 ORDER BY CASE state WHEN 'active' THEN 0 ELSE 1 END,updated_at DESC", workspace)
+                    : db.Query("SELECT * FROM workspace_memories WHERE workspace_path=?1 AND state='active' ORDER BY updated_at DESC", workspace);
+                return new JArray(rows.Select(MemoryItem));
+            }
+        }
+
+        public JObject SetWorkspaceMemoryActive(string workspace, string id, bool active)
+        {
+            workspace = NormalizeWorkspace(workspace);
+            Guid parsed;
+            if (!Guid.TryParse((id ?? "").Trim(), out parsed)) throw new InvalidOperationException("记忆 ID 无效");
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var rows = db.Query("SELECT * FROM workspace_memories WHERE id=?1 AND workspace_path=?2", id, workspace);
+                if (rows.Count == 0) throw new InvalidOperationException("找不到这条工作区记忆");
+                if (active) ValidateMemoryCapacity(db, workspace, id, Convert.ToString(rows[0]["content"]).Length);
+                db.Execute("UPDATE workspace_memories SET state=?1,updated_at=?2 WHERE id=?3 AND workspace_path=?4",
+                    active ? "active" : "inactive", ProviderStore.NowIso(), id, workspace);
+                return MemoryItem(db.Query("SELECT * FROM workspace_memories WHERE id=?1", id).First());
+            }
+        }
+
+        public bool DeleteWorkspaceMemory(string workspace, string id)
+        {
+            workspace = NormalizeWorkspace(workspace);
+            Guid parsed;
+            if (!Guid.TryParse((id ?? "").Trim(), out parsed)) throw new InvalidOperationException("记忆 ID 无效");
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                db.Execute("DELETE FROM workspace_memories WHERE id=?1 AND workspace_path=?2", id, workspace);
+                return db.ScalarInt64("SELECT changes()") == 1;
+            }
+        }
+
+        private static void ValidateMemoryCapacity(SqliteDb db, string workspace, string excludingId, int incomingCharacters)
+        {
+            var active = db.ScalarInt64("SELECT COUNT(*) FROM workspace_memories WHERE workspace_path=?1 AND state='active' AND id<>?2", workspace, excludingId ?? "");
+            if (active >= 32) throw new InvalidOperationException("当前工作区最多启用 32 条长期记忆；请先停用一条");
+            var characters = db.ScalarInt64("SELECT COALESCE(SUM(LENGTH(content)),0) FROM workspace_memories WHERE workspace_path=?1 AND state='active' AND id<>?2", workspace, excludingId ?? "");
+            if (characters + incomingCharacters > 24000) throw new InvalidOperationException("当前工作区启用记忆正文合计不能超过 24,000 个字符；请缩短或停用部分记忆");
+        }
+
+        private static string NormalizeWorkspace(string workspace)
+        {
+            var full = System.IO.Path.GetFullPath((workspace ?? "").Trim());
+            var root = System.IO.Path.GetPathRoot(full);
+            return string.Equals(full, root, StringComparison.OrdinalIgnoreCase)
+                ? root : full.TrimEnd(System.IO.Path.DirectorySeparatorChar, System.IO.Path.AltDirectorySeparatorChar);
+        }
+
+        private static JObject MemoryItem(Dictionary<string, object> row)
+        {
+            var content = Convert.ToString(row["content"]);
+            return new JObject
+            {
+                ["id"] = Convert.ToString(row["id"]), ["workspace"] = Convert.ToString(row["workspace_path"]),
+                ["title"] = Convert.ToString(row["title"]), ["content"] = content,
+                ["active"] = string.Equals(Convert.ToString(row["state"]), "active", StringComparison.Ordinal),
+                ["source"] = Convert.ToString(row["source"]), ["sourceRunId"] = Convert.ToString(row["source_run_id"]),
+                ["estimatedTokens"] = ContextBudgetPlanner.EstimateTokens(content),
+                ["createdAt"] = Convert.ToString(row["created_at"]), ["updatedAt"] = Convert.ToString(row["updated_at"])
+            };
         }
 
         public string FindRunByRequestId(string requestId)
@@ -554,22 +1027,26 @@ ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,state=CASE WHEN schedules
                 ["path"] = _path, ["schemaVersion"] = db.ScalarString("SELECT value FROM schema_meta WHERE key='schema_version'") ?? "0",
                 ["journalMode"] = db.ScalarString("PRAGMA journal_mode") ?? "", ["tasks"] = db.ScalarInt64("SELECT COUNT(*) FROM tasks"),
                 ["runs"] = db.ScalarInt64("SELECT COUNT(*) FROM runs"), ["events"] = db.ScalarInt64("SELECT COUNT(*) FROM events"), ["toolCalls"] = db.ScalarInt64("SELECT COUNT(*) FROM tool_calls"),
-                ["artifacts"] = db.ScalarInt64("SELECT COUNT(*) FROM artifacts"), ["contextEntries"] = db.ScalarInt64("SELECT COUNT(*) FROM context_entries")
+                ["artifacts"] = db.ScalarInt64("SELECT COUNT(*) FROM artifacts"), ["contextEntries"] = db.ScalarInt64("SELECT COUNT(*) FROM context_entries"),
+                ["providerHealthEntries"] = db.ScalarInt64("SELECT COUNT(*) FROM provider_health"),
+                ["workspaceMemories"] = db.ScalarInt64("SELECT COUNT(*) FROM workspace_memories")
                 , ["integrity"] = db.ScalarString("PRAGMA integrity_check") ?? "unknown"
             };
         }
 
-        private static void NormalizeToolCalls(SqliteDb db, string runId, string taskId, string payload, string now)
+        private static void NormalizeToolCalls(SqliteDb db, string runId, string taskId, string payload, string now, JObject policyManifest)
         {
             JObject value; try { value = JObject.Parse(payload); } catch { return; }
+            var policy = ToolRuntimeSettings.From(policyManifest);
             var type = (string)value["type"] ?? ""; var blocks = value["message"]?["content"] as JArray ?? new JArray();
             if (type == "assistant")
             {
                 foreach (var block in blocks.OfType<JObject>().Where(block => (string)block["type"] == "tool_use"))
                 {
                     var id = (string)block["id"] ?? ""; if (id.Length == 0) continue;
-                    db.Execute("INSERT OR IGNORE INTO tool_calls(id,run_id,task_id,tool_name,state,input_json,started_at,updated_at) VALUES(?1,?2,?3,?4,'running',?5,?6,?6)",
-                        id, runId, taskId, (string)block["name"] ?? "unknown", (block["input"] ?? new JObject()).ToString(Formatting.None), now);
+                    var input = ToolRuntimePolicy.Prepare(block["input"] ?? new JObject(), policy.MaxInputBytes, true);
+                    db.Execute("INSERT OR IGNORE INTO tool_calls(id,run_id,task_id,tool_name,state,input_json,input_meta_json,started_at,updated_at) VALUES(?1,?2,?3,?4,'running',?5,?6,?7,?7)",
+                        id, runId, taskId, (string)block["name"] ?? "unknown", input.Json, input.Metadata.ToString(Formatting.None), now);
                 }
             }
             else if (type == "user")
@@ -577,17 +1054,19 @@ ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,state=CASE WHEN schedules
                 foreach (var block in blocks.OfType<JObject>().Where(block => (string)block["type"] == "tool_result"))
                 {
                     var id = (string)block["tool_use_id"] ?? ""; if (id.Length == 0) continue;
-                    var output = (block["content"] ?? JValue.CreateString("")).ToString(Formatting.None);
-                    if (output.Length > 1000000) output = output.Substring(0, 700000) + "\n...tool output capped...\n" + output.Substring(output.Length - 200000);
+                    var output = ToolRuntimePolicy.Prepare(block["content"] ?? JValue.CreateString(""), policy.MaxOutputBytes, false);
                     var failed = (bool?)block["is_error"] ?? false;
-                    db.Execute("UPDATE tool_calls SET state=?2,output_json=?3,error_text=?4,updated_at=?5 WHERE id=?1", id, failed ? "failed" : "completed", output, failed ? LimitText(output, 12000) : "", now);
+                    bool ignored; var error = failed ? ToolRuntimePolicy.RedactAndLimit(output.Json, policy.MaxErrorBytes, out ignored) : "";
+                    db.Execute(@"UPDATE tool_calls SET state=?2,output_json=?3,output_meta_json=?4,error_text=?5,terminal_reason=?6,
+duration_ms=MAX(0,CAST((julianday(?7)-julianday(started_at))*86400000 AS INTEGER)),updated_at=?7 WHERE id=?1",
+                        id, failed ? "failed" : "completed", output.Json, output.Metadata.ToString(Formatting.None), error, failed ? "tool_result_error" : "tool_result", now);
                 }
             }
         }
 
         private static JToken ParseJson(string value) { if (string.IsNullOrWhiteSpace(value)) return null; try { return JToken.Parse(value); } catch { return JValue.CreateString(value); } }
         private static string LimitText(string value, int max) { return string.IsNullOrEmpty(value) || value.Length <= max ? value ?? "" : value.Substring(0, max); }
-        private static long EstimateTokens(string value) { if (string.IsNullOrEmpty(value)) return 0L; long wide = value.Count(character => character > 255); return Math.Max(1L, (value.Length - wide + 3L) / 4L + wide); }
+        private static long EstimateTokens(string value) { return ContextBudgetPlanner.EstimateTokens(value); }
         private static string Sha256Text(string value) { using (var sha = SHA256.Create()) return string.Concat(sha.ComputeHash(Encoding.UTF8.GetBytes(value ?? "")).Select(item => item.ToString("X2"))); }
 
         private static string Relative(string root, string path)
@@ -628,6 +1107,13 @@ ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,state=CASE WHEN schedules
                 if ((long)second["events"] != eventCount) return 33;
                 store.UpsertTask("task-live", AppPaths.Workspace, "实时任务", JobStates.Running, false, "{}");
                 store.UpsertRun("run-live", "task-live", "request-live", "offline", AppPaths.Workspace, JobStates.Running, 123);
+                if (store.TaskState("task-live") != JobStates.Running) return 64;
+                store.UpsertRun("run-live-other", "task-live", "request-live-other", "offline", AppPaths.Workspace, JobStates.Running, 124);
+                store.UpdateRunState("run-live", JobStates.Completed, 123, "{}");
+                if (store.TaskState("task-live") != JobStates.Running) return 65;
+                store.UpdateRunState("run-live-other", JobStates.Completed, 124, "{}");
+                if (store.TaskState("task-live") != JobStates.Completed) return 66;
+                store.UpsertRun("run-live", "task-live", "request-live", "offline", AppPaths.Workspace, JobStates.Running, 123);
                 store.AppendWorkerEvent("run-live", "task-live", "{\"type\":\"result\",\"text\":\"SQLite 中文\"}");
                 long next; var events = store.ReadEvents("run-live", 0, 10, out next);
                 if (next != 1 || events.Count != 1 || !((string)events[0]["payload"]).Contains("SQLite 中文")) return 34;
@@ -636,24 +1122,111 @@ ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,state=CASE WHEN schedules
                 store.AppendWorkerEvent("run-live", "task-live", "{\"type\":\"user\",\"message\":{\"content\":[{\"type\":\"tool_result\",\"tool_use_id\":\"tool-one\",\"content\":\"ok\"}]}}", "test:tool:result");
                 var tools = store.ReadToolCalls("run-live");
                 if (tools.Count != 1 || (string)tools[0]["state"] != "completed" || (string)tools[0]["toolName"] != "Read") return 36;
+                var oversizedInput = new JObject
+                {
+                    ["authorization"] = "Bearer secret-value-that-must-not-persist",
+                    ["api_key"] = "sk-tool-runtime-secret-value",
+                    ["payload"] = new string('参', 30000)
+                };
+                store.AppendWorkerEvent("run-live", "task-live", new JObject
+                {
+                    ["type"] = "assistant", ["message"] = new JObject { ["content"] = new JArray(new JObject
+                    {
+                        ["type"] = "tool_use", ["id"] = "tool-large", ["name"] = "Bash", ["input"] = oversizedInput
+                    }) }
+                }.ToString(Formatting.None), "test:tool:large:start");
+                store.AppendWorkerEvent("run-live", "task-live", new JObject
+                {
+                    ["type"] = "user", ["message"] = new JObject { ["content"] = new JArray(new JObject
+                    {
+                        ["type"] = "tool_result", ["tool_use_id"] = "tool-large",
+                        ["content"] = new string('结', 220000) + " sk-tool-output-secret-value"
+                    }) }
+                }.ToString(Formatting.None), "test:tool:large:result");
+                var large = store.ReadToolCalls("run-live").OfType<JObject>().First(item => (string)item["id"] == "tool-large");
+                if ((bool?)large["inputPersistence"]?["truncated"] != true || (bool?)large["outputPersistence"]?["truncated"] != true) return 50;
+                if ((bool?)large["inputPersistence"]?["redacted"] != true || (bool?)large["outputPersistence"]?["redacted"] != true) return 51;
+                var persistedTool = large.ToString(Formatting.None);
+                if (persistedTool.Contains("secret-value-that-must-not-persist") || persistedTool.Contains("sk-tool-runtime-secret-value") || persistedTool.Contains("sk-tool-output-secret-value")) return 52;
+                long toolNext; var persistedEvents = store.ReadEvents("run-live", 0, 50, out toolNext).ToString(Formatting.None);
+                if (persistedEvents.Contains("secret-value-that-must-not-persist") || persistedEvents.Contains("sk-tool-runtime-secret-value") || persistedEvents.Contains("sk-tool-output-secret-value")) return 53;
+                store.AppendWorkerEvent("run-live", "task-live", "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"tool-cancel\",\"name\":\"Bash\",\"input\":{}}]}}", "test:tool:cancel:start");
+                if (store.TransitionActiveToolCalls("run-live", "cancelled", "user_cancelled") != 1) return 54;
+                store.AppendWorkerEvent("run-live", "task-live", "{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"tool-timeout\",\"name\":\"Bash\",\"input\":{}}]}}", "test:tool:timeout:start");
+                System.Threading.Thread.Sleep(20);
+                if (store.MarkTimedOutToolCalls("run-live", 0).Count != 1) return 55;
+                var terminalTools = store.ReadToolCalls("run-live").OfType<JObject>().ToDictionary(item => (string)item["id"]);
+                if ((string)terminalTools["tool-cancel"]["state"] != "cancelled" || (string)terminalTools["tool-timeout"]["state"] != "timed_out") return 56;
                 store.RecordContext("run-live", "task-live", "user", "测试上下文", "中文上下文", new JObject());
                 if ((long)store.ContextReport("run-live")["estimatedTokens"] <= 0) return 37;
                 var artifactPath = System.IO.Path.Combine(AppPaths.Workspace, "artifact-test.txt"); File.WriteAllText(artifactPath, "artifact", new UTF8Encoding(false));
                 store.RecordArtifact("task-live", "run-live", "test", artifactPath, "text/plain", new JObject());
                 if (store.ListArtifacts("run-live").Count != 1) return 38;
+                var memoryOneId = Guid.NewGuid().ToString();
+                var memoryTwoId = Guid.NewGuid().ToString();
+                var memoryOne = store.SaveWorkspaceMemory(AppPaths.Workspace, memoryOneId, "默认语言", "默认使用中文回答，专有名词保留英文。", true);
+                store.SaveWorkspaceMemory(AppPaths.Workspace, memoryTwoId, "暂不注入", "这条记忆处于停用状态。", false);
+                if ((bool?)memoryOne["active"] != true || (long?)memoryOne["estimatedTokens"] <= 0L) return 67;
+                if (store.ListWorkspaceMemories(AppPaths.Workspace, false).Count != 1 || store.ListWorkspaceMemories(AppPaths.Workspace, true).Count != 2) return 68;
+                if ((bool?)store.SetWorkspaceMemoryActive(AppPaths.Workspace, memoryTwoId, true)["active"] != true || store.ListWorkspaceMemories(AppPaths.Workspace, false).Count != 2) return 69;
+                var updatedMemory = store.SaveWorkspaceMemory(AppPaths.Workspace, memoryOneId, "默认语言（更新）", "默认使用中文；技术名词保留英文。", true);
+                if ((string)updatedMemory["title"] != "默认语言（更新）") return 70;
+                if (!store.DeleteWorkspaceMemory(AppPaths.Workspace, memoryTwoId) || store.ListWorkspaceMemories(AppPaths.Workspace, true).Count != 1) return 71;
+                var reopenedMemories = new AgentEventStore(); reopenedMemories.InitializeAndMigrate();
+                if (reopenedMemories.ListWorkspaceMemories(AppPaths.Workspace, false).Count != 1) return 72;
                 if (!Directory.GetDirectories(AppPaths.Data, "migration-backup-*").Any()) return 39;
                 var scheduleId = "schedule-durable"; var due = DateTimeOffset.UtcNow.AddSeconds(-1);
                 store.ReplaceSchedules(new JArray(new JObject { ["id"] = scheduleId, ["sessionId"] = "task-live", ["enabled"] = true, ["at"] = due.ToString("o"), ["text"] = "可靠调度", ["maxRetries"] = 1 }));
                 if (store.ClaimDueSchedules("host:test", DateTimeOffset.UtcNow, 5).Count != 1) return 40;
                 if (store.ClaimDueSchedules("host:other", DateTimeOffset.UtcNow, 5).Count != 0) return 41;
+                var trackedSchedule = "schedule-tracked";
+                store.ReplaceSchedules(new JArray(new JObject { ["id"] = trackedSchedule, ["sessionId"] = "task-live", ["enabled"] = true, ["at"] = due.ToString("o"), ["text"] = "可追踪调度", ["maxRetries"] = 0 }));
+                if (store.ClaimDueSchedules("host:test", DateTimeOffset.UtcNow, 5).Count != 1) return 61;
+                store.UpsertRun("run-scheduled", "task-live", "request-scheduled", "offline", AppPaths.Workspace, JobStates.Running, 123);
+                var boundSchedule = store.BindScheduleRun(trackedSchedule, "run-scheduled", "host:test", DateTimeOffset.UtcNow);
+                if (boundSchedule == null || (string)boundSchedule["activeRunId"] != "run-scheduled" || (string)boundSchedule["lastRunId"] != "run-scheduled") return 62;
+                store.UpdateRunState("run-scheduled", JobStates.Completed, 123, new JObject { ["result"] = "schedule done" }.ToString(Formatting.None));
+                var scheduleResult = store.CompleteSchedule(trackedSchedule, true, "", DateTimeOffset.UtcNow);
+                if (scheduleResult == null || (string)scheduleResult["state"] != "completed" || (string)scheduleResult["lastRunId"] != "run-scheduled" || !string.IsNullOrWhiteSpace((string)scheduleResult["activeRunId"])) return 63;
                 store.CompleteSchedule(scheduleId, false, "first failure sk-secret-value", DateTimeOffset.UtcNow);
                 store.DeferSchedule(scheduleId, DateTimeOffset.UtcNow.AddSeconds(-1), "retry-now");
                 if (store.ClaimDueSchedules("host:test", DateTimeOffset.UtcNow, 5).Count != 1) return 42;
                 store.CompleteSchedule(scheduleId, false, "second failure", DateTimeOffset.UtcNow);
-                if ((string)store.ListSchedules(true).First["state"] != "dead_letter") return 43;
-                if (!store.ReplayDeadLetter(scheduleId) || (string)store.ListSchedules(true).First["state"] != "scheduled") return 44;
+                var deadSchedule = store.ListSchedules(true).OfType<JObject>().FirstOrDefault(item => (string)item["id"] == scheduleId);
+                if (deadSchedule == null || (string)deadSchedule["state"] != "dead_letter") return 43;
+                if (!store.ReplayDeadLetter(scheduleId) || (string)store.ListSchedules(true).OfType<JObject>().First(item => (string)item["id"] == scheduleId)["state"] != "scheduled") return 44;
                 store.RecordFork("task-live", "task-fork", "checkpoint-one", new JObject { ["permissionInheritance"] = "restrict-only" });
                 if (store.ListForks("task-live").Count != 1 || (string)store.ListForks("task-fork")[0]["parentTaskId"] != "task-live") return 45;
+                store.UpsertRun("run-child", "task-child", "request-child", "offline", AppPaths.Workspace, JobStates.Starting, 0);
+                store.CreateChildAgent("run-live", "run-child", "task-child", 1, new JObject { ["name"] = "测试子 Agent" });
+                store.UpdateRunState("run-child", JobStates.Running, 456, "{}");
+                if ((string)store.ListChildAgents("run-live")[0]["state"] != JobStates.Running) return 57;
+                store.UpdateRunState("run-child", JobStates.Completed, 456, new JObject { ["result"] = "子 Agent 中文成果" }.ToString(Formatting.None));
+                var child = store.ListChildAgents("run-live")[0] as JObject;
+                if (child == null || (string)child["state"] != JobStates.Completed || (string)child["handoffState"] != "ready" || !child["result"].ToString().Contains("子 Agent 中文成果")) return 58;
+                var handoff = store.AcceptChildHandoff("run-child", "run-live");
+                if (handoff == null || (string)handoff["handoffState"] != "accepted") return 59;
+                store.UpsertRun("run-failed-child", "task-failed-child", "request-failed-child", "offline", AppPaths.Workspace, JobStates.Failed, 0);
+                Directory.CreateDirectory(System.IO.Path.Combine(AppPaths.Runs, "run-failed-child"));
+                JsonUtil.WriteAtomic(System.IO.Path.Combine(AppPaths.Runs, "run-failed-child", "request.json"), new JObject { ["prompt"] = "retry fixture", ["childName"] = "retry" });
+                store.CreateChildAgent("run-live", "run-failed-child", "task-failed-child", 1, new JObject { ["name"] = "retry", ["attempt"] = 1, ["maxRetries"] = 2 });
+                store.UpdateRunState("run-failed-child", JobStates.Failed, 0, new JObject { ["error"] = "fixture failure" }.ToString(Formatting.None));
+                var retryRequest = store.PrepareChildRetry("run-failed-child", "run-live");
+                if (retryRequest == null || (int?)retryRequest["attempt"] != 2 || (string)retryRequest["retryOf"] != "run-failed-child") return 60;
+                var cooling = store.RecordProviderProbe("provider-health-test", false, "rate_limit", "429 sk-provider-secret-value", 120, 1, "selftest");
+                if ((string)cooling["state"] != "cooling" || (bool?)cooling["available"] != false || ((string)cooling["lastError"] ?? "").Contains("sk-provider-secret-value")) return 46;
+                System.Threading.Thread.Sleep(1100);
+                var recoveredHealth = store.ListProviderHealth("provider-health-test").First as JObject;
+                if (recoveredHealth == null || (bool?)recoveredHealth["available"] != true || (string)recoveredHealth["state"] != "probe_failed") return 47;
+                var healthy = store.RecordProviderOutcome("provider-health-test", "healthy-model", true, "", "", 85, 0, "selftest");
+                var unavailable = store.RecordProviderOutcome("provider-health-test", "missing-model", false, "model_unavailable", "模型不存在", 91, 300, "selftest");
+                if ((string)unavailable["state"] != "unavailable" || (bool?)unavailable["available"] != false ||
+                    (long?)unavailable["cooldownRemainingSeconds"] != 0 || (bool?)store.GetProviderHealth("provider-health-test", "missing-model")?["available"] != false) return 61;
+                if ((string)healthy["state"] != "healthy" || (long?)healthy["successCount"] != 1L) return 48;
+                store.RecordProviderProbe("stale-provider-health", false, "unknown", "stale fixture", 1, 0, "selftest");
+                if (store.PruneProviderHealth(new[] { "provider-health-test" }) != 1 || store.ListProviderHealth("stale-provider-health").Count != 0 || store.ListProviderHealth("provider-health-test").Count < 2) return 64;
+                var finalHealth = store.Health();
+                if ((string)finalHealth["schemaVersion"] != "11" || (long?)finalHealth["providerHealthEntries"] < 2L || (long?)finalHealth["workspaceMemories"] != 1L) return 49;
                 return 0;
             }
             catch (Exception error)

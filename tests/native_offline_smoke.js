@@ -46,6 +46,7 @@ async function main() {
   });
   const tokenCount = await adapterResponse.json();
   const css = await (await fetch(`${base}/static/styles.css`)).text();
+  const evidence = await api('/api/chat/evidence/offline-fixture');
 
   const result = {
     unauthorizedStatus: unauthorized.status,
@@ -58,13 +59,16 @@ async function main() {
     adapterStatus: adapterResponse.status,
     adapterInputTokens: tokenCount.input_tokens,
     cssEmbedded: css.includes('--claude'),
+    evidenceStatus: evidence.status,
+    evidenceRunId: evidence.data.runId,
+    evidenceSummaryShape: Number(evidence.data.summary?.contextSources) === 0 && Array.isArray(evidence.data.artifacts) && Array.isArray(evidence.data.tools),
     backend: bootstrap.data.backend,
     trayMode: bootstrap.data.trayMode
   };
   console.log(JSON.stringify(result, null, 2));
   if (result.unauthorizedStatus !== 403 || result.providerStatus !== 200 || !result.dualText || !result.dualImage ||
       !result.publicHasToken || result.publicLeaksToken || result.savedChineseTitle !== '中文编码验证' ||
-      result.adapterStatus !== 200 || !result.cssEmbedded || result.backend !== 'C#/.NET native host' || !result.trayMode) {
+      result.adapterStatus !== 200 || !result.cssEmbedded || result.evidenceStatus !== 200 || result.evidenceRunId !== 'offline-fixture' || !result.evidenceSummaryShape || result.backend !== 'C#/.NET native host' || !result.trayMode) {
     process.exitCode = 1;
   }
 }

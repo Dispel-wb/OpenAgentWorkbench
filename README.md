@@ -12,6 +12,7 @@ Open Agent Workbench 是一个面向 Windows 10/11 的中文 Agent 桌面工作�
 - ConPTY 终端、文件与命令权限审批、任务级工作区、检查点与回滚基础能力。
 - 对话归档、恢复、删除、队列插入、引用、TXT 导出、文件卡片和本地路径跳转。
 - 深浅色主题以及 PNG + CSS + JSON 皮肤包导入。
+- 真正的 Claude Code / Codex CLI / DSHarness CLI 核心切换；认证、停止和能力边界详见 [命令行核心说明](docs/AGENT_WORKER_SDK.md)。
 
 ## Preview 的边界
 
@@ -25,24 +26,25 @@ Open Agent Workbench 是一个面向 Windows 10/11 的中文 Agent 桌面工作�
 
 要求：
 
-- Windows 10/11 x64
-- Visual Studio 2022（包含 MSBuild 与 Roslyn C# compiler）
-- Python 3 与 Pillow（仅在构建时生成开源图标）
-- Microsoft WebView2 SDK assemblies
-- Newtonsoft.Json
+- Windows 10/11 x64、.NET Framework 4.8
+- Python 3.13 与 Pillow 12.3.0（构建图标）
+- PowerShell；Node.js 用于测试和可选 DSHarness
 
 构建开源版：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\build_exe.ps1 -Edition OpenSource
+python -m pip install Pillow==12.3.0
+.\restore_build_dependencies.ps1
+.\build_exe.ps1 -Edition OpenSource -DependencyRoot .\.packages -PythonPath (Get-Command python).Source
 ```
 
-如果依赖不在默认位置，可使用 `-VisualStudioRoot`、`-WebViewLibraryRoot`、`-NewtonsoftJsonPath` 与 `-PythonPath` 指定。输出位于 `dist\opensource\OpenAgentWorkbench.exe`。
+构建依赖按锁定版本与 SHA-256 恢复，不强制安装 Visual Studio。输出位于 `dist\opensource\OpenAgentWorkbench.exe`。详见 [开发指南](docs/DEVELOPMENT.md)、[可复现构建](docs/BUILD_REPRODUCIBILITY.md)、[Windows 测试矩阵](docs/WINDOWS_TEST_MATRIX.md)。
 
 ## 数据与安全
 
 - 默认工作区：`D:\work\OpenAgent`
 - 默认安装目录：`D:\softwares\OpenAgentWorkbench`
+- 无可用 D 盘时工作区回退到用户文档目录，安装目录回退到 LocalAppData/Programs；也可显式指定其他路径。
 - Provider token 使用 Windows DPAPI CurrentUser 加密保存。
 - 本地 API 绑定 `127.0.0.1`，并使用每次安装生成的本机认证密钥。
 - 诊断包会尝试脱敏，但分享前仍应人工检查路径、机器名和任务摘要。

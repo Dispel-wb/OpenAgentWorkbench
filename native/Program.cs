@@ -15,23 +15,111 @@ using Newtonsoft.Json.Linq;
 
 [assembly: AssemblyTitle(ClaudeCodeWorkbench.EditionInfo.ProductName)]
 [assembly: AssemblyProduct(ClaudeCodeWorkbench.EditionInfo.ProductName)]
-[assembly: AssemblyVersion("6.3.0.0")]
-[assembly: AssemblyFileVersion("6.3.0.0")]
+#if OPEN_SOURCE
+[assembly: AssemblyVersion("0.7.0.0")]
+[assembly: AssemblyFileVersion("0.7.0.0")]
+#else
+[assembly: AssemblyVersion("6.4.22.0")]
+[assembly: AssemblyFileVersion("6.4.22.0")]
+#endif
+[assembly: AssemblyInformationalVersion(ClaudeCodeWorkbench.EditionInfo.ContractVersion)]
 
 namespace ClaudeCodeWorkbench
 {
     internal static class Program
     {
         public const string AppContractVersion = EditionInfo.ContractVersion;
-        private const string HostMutexName = "Local\\" + EditionInfo.StorageId + ".Host.V1";
-        private const string UiMutexName = "Local\\" + EditionInfo.StorageId + ".UI.V1";
+        private static string HostMutexName { get { return "Local\\" + MutexScope() + ".Host.V1"; } }
+        private static string UiMutexName { get { return "Local\\" + MutexScope() + ".UI.V1"; } }
         private static Mutex _hostMutex;
         private static Mutex _uiMutex;
+        internal static string ProcessScope { get { return MutexScope(); } }
+
+        // Test harnesses may isolate a development Host from the installed Local edition.
+        // Normal launches keep the edition-wide singleton so two user-facing Hosts cannot race.
+        private static string MutexScope()
+        {
+            var requested = Environment.GetEnvironmentVariable("CLAUDE_GUI_MUTEX_SCOPE");
+            if (string.IsNullOrWhiteSpace(requested) || !TestMutexScopeAllowed()) return EditionInfo.StorageId;
+            var builder = new StringBuilder();
+            foreach (var character in requested.Trim())
+            {
+                if (char.IsLetterOrDigit(character) || character == '_' || character == '-' || character == '.') builder.Append(character);
+                else builder.Append('_');
+            }
+            return builder.Length == 0 ? EditionInfo.StorageId : builder.ToString();
+        }
+
+        private static bool TestMutexScopeAllowed()
+        {
+            return TestMutexScopeAllowed(
+                Application.ExecutablePath,
+                Environment.GetEnvironmentVariable("CLAUDE_GUI_WORKSPACE"),
+                string.Equals(Environment.GetEnvironmentVariable("CLAUDE_GUI_TEST_MODE"), "1", StringComparison.Ordinal));
+        }
+
+        private static bool TestMutexScopeAllowed(string executablePath, string workspace, bool testMode)
+        {
+            if (!testMode) return false;
+            try
+            {
+                var executable = Path.GetFullPath(executablePath ?? "");
+                var installRoot = Path.GetFullPath(EditionInfo.DefaultInstallDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                if (executable.StartsWith(installRoot, StringComparison.OrdinalIgnoreCase)) return false;
+                workspace = Path.GetFullPath(workspace ?? "");
+                var tempRoot = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                return workspace.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase);
+            }
+            catch { return false; }
+        }
+
+        private static int MutexScopeSelfTest()
+        {
+            var oldMode = Environment.GetEnvironmentVariable("CLAUDE_GUI_TEST_MODE");
+            var oldScope = Environment.GetEnvironmentVariable("CLAUDE_GUI_MUTEX_SCOPE");
+            var oldWorkspace = Environment.GetEnvironmentVariable("CLAUDE_GUI_WORKSPACE");
+            try
+            {
+                var tempWorkspace = Path.Combine(Path.GetTempPath(), "claude-mutex-scope-" + Guid.NewGuid().ToString("N"));
+                var developmentExecutable = Path.Combine(Path.GetTempPath(), "claude-workbench-dev", "ClaudeCodeWorkbench.exe");
+                var installedExecutable = Path.Combine(EditionInfo.DefaultInstallDirectory, Path.GetFileName(Application.ExecutablePath));
+                var outsideTempWorkspace = Path.Combine(Path.GetPathRoot(Environment.SystemDirectory) ?? @"C:\", "claude-mutex-outside-temp");
+
+                if (TestMutexScopeAllowed(developmentExecutable, tempWorkspace, false)) return 31;
+                if (TestMutexScopeAllowed(developmentExecutable, outsideTempWorkspace, true)) return 32;
+                if (TestMutexScopeAllowed(installedExecutable, tempWorkspace, true)) return 33;
+                if (!TestMutexScopeAllowed(developmentExecutable, tempWorkspace, true)) return 34;
+
+                Environment.SetEnvironmentVariable("CLAUDE_GUI_MUTEX_SCOPE", "isolated/scope");
+                Environment.SetEnvironmentVariable("CLAUDE_GUI_TEST_MODE", "1");
+                Environment.SetEnvironmentVariable("CLAUDE_GUI_WORKSPACE", tempWorkspace);
+                var runningFromInstallDirectory = Path.GetFullPath(Application.ExecutablePath).StartsWith(
+                    Path.GetFullPath(EditionInfo.DefaultInstallDirectory).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar,
+                    StringComparison.OrdinalIgnoreCase);
+                var expectedScope = runningFromInstallDirectory ? EditionInfo.StorageId : "isolated_scope";
+                if (!string.Equals(MutexScope(), expectedScope, StringComparison.Ordinal)) return 35;
+                return 0;
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("CLAUDE_GUI_TEST_MODE", oldMode);
+                Environment.SetEnvironmentVariable("CLAUDE_GUI_MUTEX_SCOPE", oldScope);
+                Environment.SetEnvironmentVariable("CLAUDE_GUI_WORKSPACE", oldWorkspace);
+            }
+        }
 
         [STAThread]
         private static void Main(string[] args)
         {
             Bootstrap.InstallAssemblyResolver();
+            if (args != null && args.Length >= 2 && string.Equals(args[0], "--agent-worker-bridge", StringComparison.OrdinalIgnoreCase))
+            {
+                Environment.ExitCode = AgentWorkerBridge.Run(args[1]); return;
+            }
+            if (args != null && args.Length >= 1 && string.Equals(args[0], "--mutex-scope-selftest", StringComparison.OrdinalIgnoreCase))
+            {
+                Environment.ExitCode = MutexScopeSelfTest(); return;
+            }
             if (args != null && args.Length >= 1 && string.Equals(args[0], "--install", StringComparison.OrdinalIgnoreCase))
             {
                 AppPaths.Initialize(); Environment.ExitCode = NativeInstaller.Install(args.Length >= 2 ? args[1] : null); return;
@@ -47,7 +135,12 @@ namespace ClaudeCodeWorkbench
             if (args != null && args.Length >= 4 && string.Equals(args[0], "--apply-update", StringComparison.OrdinalIgnoreCase))
             {
                 AppPaths.Initialize();
-                Environment.ExitCode = NativeUpdater.Apply(args[1], args[2], args[3], !args.Any(value => string.Equals(value, "--no-launch", StringComparison.OrdinalIgnoreCase)));
+                var parentPid = 0;
+                for (var index = 4; index + 1 < args.Length; index++)
+                {
+                    if (string.Equals(args[index], "--parent-pid", StringComparison.OrdinalIgnoreCase)) int.TryParse(args[index + 1], out parentPid);
+                }
+                Environment.ExitCode = NativeUpdater.Apply(args[1], args[2], args[3], !args.Any(value => string.Equals(value, "--no-launch", StringComparison.OrdinalIgnoreCase)), parentPid);
                 return;
             }
             if (args != null && args.Length >= 2 && string.Equals(args[0], "--conpty-selftest", StringComparison.OrdinalIgnoreCase))
@@ -58,6 +151,7 @@ namespace ClaudeCodeWorkbench
             }
             if (args != null && args.Length >= 3 && string.Equals(args[0], "--native-worker-selftest", StringComparison.OrdinalIgnoreCase))
             {
+                Environment.SetEnvironmentVariable("CLAUDE_GUI_WORKSPACE", args[2]);
                 AppPaths.Initialize();
                 Environment.ExitCode = NativeWorkerSelfTest.Run(args[1], args[2]);
                 return;
@@ -90,6 +184,14 @@ namespace ClaudeCodeWorkbench
             {
                 PermissionMcp.Run();
                 return;
+            }
+            if (args != null && args.Any(value => string.Equals(value, "--stop-watchdog", StringComparison.OrdinalIgnoreCase)))
+            {
+                AppPaths.Initialize(); NativeHostWatchdog.SignalStop(); return;
+            }
+            if (args != null && args.Any(value => string.Equals(value, "--watchdog", StringComparison.OrdinalIgnoreCase)))
+            {
+                AppPaths.Initialize(); Environment.ExitCode = NativeHostWatchdog.Run(); return;
             }
 
             Bootstrap.ExtractNativeLoader();
@@ -127,11 +229,14 @@ namespace ClaudeCodeWorkbench
             if (!created) return;
             try
             {
+                try { NativeStartupRegistration.ReconcileExisting(); }
+                catch (Exception error) { CrashLog.Handled("StartupRegistration", error); }
                 using (var server = new ApiServer())
                 using (var trayHost = new NativeHost(server, true))
                 {
                     server.AttachWindow(trayHost);
                     server.Start();
+                    NativeHostWatchdog.EnsureRunning();
                     Application.Run(trayHost);
                 }
             }
@@ -166,7 +271,7 @@ namespace ClaudeCodeWorkbench
                     WorkingDirectory = AppPaths.Workspace
                 });
             }
-            catch (Exception error) { CrashLog.Write("LaunchUi", error); }
+            catch (Exception error) { CrashLog.Handled("LaunchUi", error); }
         }
 
         private static HostConnection EnsureHost()
@@ -309,8 +414,20 @@ namespace ClaudeCodeWorkbench
 
         public static void Initialize()
         {
-            Workspace = Environment.GetEnvironmentVariable("CLAUDE_GUI_WORKSPACE") ?? EditionInfo.DefaultWorkspace;
-            ClaudeRoot = Environment.GetEnvironmentVariable("CLAUDE_GUI_ROOT") ?? EditionInfo.DefaultInstallDirectory;
+            Workspace = Environment.GetEnvironmentVariable("CLAUDE_GUI_WORKSPACE");
+            if (string.IsNullOrWhiteSpace(Workspace))
+            {
+                var fallback = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), EditionInfo.IsOpenSource ? "OpenAgent" : "Claude");
+                try
+                {
+                    if (!Directory.Exists(Path.GetPathRoot(EditionInfo.DefaultWorkspace))) Workspace = fallback;
+                    else { Directory.CreateDirectory(EditionInfo.DefaultWorkspace); Workspace = EditionInfo.DefaultWorkspace; }
+                }
+                catch (UnauthorizedAccessException) { Workspace = fallback; }
+                catch (IOException) { Workspace = fallback; }
+            }
+            ClaudeRoot = Environment.GetEnvironmentVariable("CLAUDE_GUI_ROOT");
+            if (string.IsNullOrWhiteSpace(ClaudeRoot)) ClaudeRoot = Directory.Exists(@"D:\softwares") ? EditionInfo.DefaultInstallDirectory : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", EditionInfo.StorageId);
             Data = Path.Combine(Workspace, ".claude-gui-v2");
             Runs = Path.Combine(Data, "runs");
             Messages = Path.Combine(Data, "messages");
@@ -361,6 +478,23 @@ namespace ClaudeCodeWorkbench
             catch { }
         }
 
+        public static void Handled(string stage, Exception error)
+        {
+            try
+            {
+                var root = AppPaths.Data ?? Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), EditionInfo.StorageId);
+                Directory.CreateDirectory(root);
+                File.AppendAllText(Path.Combine(root, "native-runtime.log"),
+                    DateTime.Now.ToString("s") + " [handled:" + SecretRedactor.Redact(stage ?? "unknown") + "] " +
+                    SecretRedactor.Redact(error == null ? "unknown" : error.ToString()) + Environment.NewLine,
+                    Encoding.UTF8);
+                if ((stage ?? "").StartsWith("NativeWorker", StringComparison.OrdinalIgnoreCase)) NativeMetrics.RecordWorkerError(stage);
+                NativeMetrics.RecordHandledError(stage, error);
+            }
+            catch { }
+        }
+
         public static void Write(string stage, Exception error)
         {
             try
@@ -371,6 +505,8 @@ namespace ClaudeCodeWorkbench
                 File.AppendAllText(Path.Combine(root, "native-crash.log"),
                     DateTime.Now.ToString("s") + " [" + SecretRedactor.Redact(stage) + "] " + SecretRedactor.Redact(error == null ? "unknown" : error.ToString()) + Environment.NewLine,
                     Encoding.UTF8);
+                if ((stage ?? "").StartsWith("NativeWorker", StringComparison.OrdinalIgnoreCase)) NativeMetrics.RecordWorkerError(stage);
+                NativeMetrics.RecordCrash(stage, error);
             }
             catch { }
         }

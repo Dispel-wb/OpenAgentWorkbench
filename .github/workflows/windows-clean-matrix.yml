@@ -1,0 +1,86 @@
+name: Clean Windows Matrix
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  clean-windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: windows-10-evergreen-no-claude
+            labels: '["self-hosted","Windows","X64","windows-10-clean","non-admin"]'
+            os: windows-10
+            runtime: evergreen
+            requireClaudeAbsent: true
+            requireUnicodeUser: false
+          - name: windows-10-fixed-120
+            labels: '["self-hosted","Windows","X64","windows-10-clean","non-admin","webview-fixed-120"]'
+            os: windows-10
+            runtime: fixed-120
+            requireClaudeAbsent: false
+            requireUnicodeUser: false
+          - name: windows-11-evergreen-unicode-user
+            labels: '["self-hosted","Windows","X64","windows-11-clean","non-admin","unicode-user"]'
+            os: windows-11
+            runtime: evergreen
+            requireClaudeAbsent: false
+            requireUnicodeUser: true
+          - name: windows-11-fixed-current
+            labels: '["self-hosted","Windows","X64","windows-11-clean","non-admin","webview-fixed-current"]'
+            os: windows-11
+            runtime: fixed-current
+            requireClaudeAbsent: false
+            requireUnicodeUser: false
+    name: ${{ matrix.name }}
+    runs-on: ${{ fromJSON(matrix.labels) }}
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Resolve build tools
+        shell: pwsh
+        run: |
+          if (-not (Get-Command python -ErrorAction SilentlyContinue)) { throw 'Python is required on the clean runner.' }
+          if (-not (Get-Command node -ErrorAction SilentlyContinue)) { throw 'Node.js is required on the clean runner.' }
+          python -m pip install Pillow==12.3.0
+          .\restore_build_dependencies.ps1
+      - name: Build
+        shell: pwsh
+        run: .\build_exe.ps1 -Edition OpenSource -DependencyRoot .\.packages -PythonPath (Get-Command python).Source -OutputPath .\dist\matrix\OpenAgentWorkbench.exe
+      - name: Run clean-machine row
+        shell: pwsh
+        env:
+          WEBVIEW2_FIXED_120: ${{ vars.WEBVIEW2_FIXED_120 }}
+          WEBVIEW2_FIXED_CURRENT: ${{ vars.WEBVIEW2_FIXED_CURRENT }}
+        run: |
+          $runtime = switch ('${{ matrix.runtime }}') {
+            'evergreen' { 'evergreen' }
+            'fixed-120' { $env:WEBVIEW2_FIXED_120 }
+            'fixed-current' { $env:WEBVIEW2_FIXED_CURRENT }
+          }
+          if (-not $runtime) { throw 'The Fixed Runtime path is not configured for this runner row.' }
+          $args = @{
+            Executable = '.\dist\matrix\OpenAgentWorkbench.exe'
+            ExpectedWindows = '${{ matrix.os }}'
+            WebViewRuntime = $runtime
+            ExpectedPrivilege = 'non-admin'
+            ExpectedEdition = 'opensource'
+            RequireNonDDrive = $true
+            Full = $true
+            DependencyRoot = '.\.packages'
+            NodePath = (Get-Command node).Source
+            ResultsPath = ".\dist\matrix\${{ matrix.name }}.json"
+          }
+          if ('${{ matrix.requireClaudeAbsent }}' -eq 'true') { $args.RequireClaudeAbsent = $true }
+          if ('${{ matrix.requireUnicodeUser }}' -eq 'true') { $args.RequireUnicodeUserProfile = $true }
+          .\tests\windows-clean-matrix.ps1 @args
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        if: always()
+        with:
+          name: matrix-${{ matrix.name }}-${{ github.run_number }}
+          path: dist/matrix/*.json
+          if-no-files-found: error

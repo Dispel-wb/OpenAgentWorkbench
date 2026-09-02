@@ -9,7 +9,7 @@ namespace ClaudeCodeWorkbench
         public const string ProductId = "OpenAgentWorkbench.Native";
         public const string ExecutableName = "OpenAgentWorkbench.exe";
         public const string StorageId = "OpenAgentWorkbench";
-        public const string ContractVersion = "6.3.0-native.opensource";
+        public const string ContractVersion = "0.7.0-preview.1";
         public const string DefaultWorkspace = @"D:\work\OpenAgent";
         public const string DefaultInstallDirectory = @"D:\softwares\OpenAgentWorkbench";
 #else
@@ -19,7 +19,7 @@ namespace ClaudeCodeWorkbench
         public const string ProductId = "ClaudeCodeWorkbench.Native";
         public const string ExecutableName = "ClaudeCodeWorkbench.exe";
         public const string StorageId = "ClaudeCodeWorkbench";
-        public const string ContractVersion = "6.3.0-native.local";
+        public const string ContractVersion = "6.4.22-dev.native.local";
         public const string DefaultWorkspace = @"D:\work\Claude";
         public const string DefaultInstallDirectory = @"D:\softwares\ClaudeCode";
 #endif

@@ -60,17 +60,26 @@ namespace ClaudeCodeWorkbench
                     throw new InvalidOperationException("已启用文字工作，但没有填写文字接口地址");
                 if ((bool)image["enabled"] && string.IsNullOrWhiteSpace((string)image["baseUrl"]))
                     throw new InvalidOperationException("已启用图像生成，但没有填写生图接口地址");
+                if ((bool)text["enabled"]) ValidateEndpoint((string)text["baseUrl"], "文字接口地址");
+                if ((bool)image["enabled"]) ValidateEndpoint((string)image["baseUrl"], "生图接口地址");
+                var authStyle = (((string)payload["authStyle"] ?? "auto").Trim().ToLowerInvariant());
+                if (!new[] { "auto", "bearer", "x-api-key" }.Contains(authStyle))
+                    throw new InvalidOperationException("鉴权方式只支持自动尝试、Bearer Token 或 x-api-key");
+                if (!new[] { "anthropic", "openai" }.Contains((string)text["protocol"]))
+                    throw new InvalidOperationException("文字协议只支持 Anthropic-compatible 或 OpenAI-compatible");
+                if (!string.Equals((string)image["protocol"], "openai-images", StringComparison.Ordinal))
+                    throw new InvalidOperationException("生图协议只支持 OpenAI Images-compatible");
 
                 var item = new JObject
                 {
                     ["id"] = id,
                     ["name"] = (((string)payload["name"] ?? "未命名 API").Trim()),
                     ["tokenEncrypted"] = encrypted,
-                    ["authStyle"] = (string)payload["authStyle"] ?? "auto",
+                    ["authStyle"] = authStyle,
                     ["text"] = text,
                     ["image"] = image,
                     ["capabilities"] = payload["capabilities"] == null
-                        ? (existing == null || existing["capabilities"] == null ? new JObject { ["schemaVersion"] = 1, ["models"] = new JObject(), ["evidencePolicy"] = "unknown-until-probed" } : existing["capabilities"].DeepClone())
+                        ? (existing == null || existing["capabilities"] == null ? new JObject { ["schemaVersion"] = 2, ["models"] = new JObject(), ["evidencePolicy"] = "unknown-until-probed" } : existing["capabilities"].DeepClone())
                         : payload["capabilities"].DeepClone(),
                     ["createdAt"] = existing == null ? NowIso() : ((string)existing["createdAt"] ?? NowIso()),
                     ["updatedAt"] = NowIso()
@@ -91,6 +100,53 @@ namespace ClaudeCodeWorkbench
                 item.Remove();
                 Save();
                 return true;
+            }
+        }
+
+        public JObject RecordModelEvidence(string id, string model, bool toolsVerified, string sourceUrl)
+        {
+            lock (_gate)
+            {
+                var item = _providers.OfType<JObject>().FirstOrDefault(value => string.Equals((string)value["id"], id, StringComparison.Ordinal));
+                if (item == null) throw new KeyNotFoundException("API 配置不存在");
+                model = (model ?? "").Trim();
+                if (model.Length == 0) throw new ArgumentException("模型不能为空", "model");
+                var capabilities = item["capabilities"] as JObject;
+                if (capabilities == null) { capabilities = new JObject(); item["capabilities"] = capabilities; }
+                capabilities["schemaVersion"] = 2;
+                capabilities["evidencePolicy"] = "live-validation";
+                var models = capabilities["models"] as JObject;
+                if (models == null) { models = new JObject(); capabilities["models"] = models; }
+                var evidence = models[model] as JObject ?? new JObject();
+                evidence["chat"] = true;
+                if (toolsVerified) evidence["tools"] = true;
+                else if (evidence["tools"] == null) evidence["tools"] = JValue.CreateNull();
+                if (evidence["vision"] == null) evidence["vision"] = JValue.CreateNull();
+                if (evidence["imageGeneration"] == null) evidence["imageGeneration"] = false;
+                if (evidence["contextWindow"] == null) evidence["contextWindow"] = JValue.CreateNull();
+                if (evidence["maxOutputTokens"] == null) evidence["maxOutputTokens"] = JValue.CreateNull();
+                evidence["evidence"] = toolsVerified ? "live-chat-tool-call" : "live-chat-response";
+                evidence["sourceUrl"] = sourceUrl ?? "";
+                evidence["checkedAt"] = NowIso();
+                models[model] = evidence;
+                item["updatedAt"] = NowIso();
+                Save();
+                return Public(item);
+            }
+        }
+
+        public JObject RecordAuthStyle(string id, string authStyle)
+        {
+            authStyle = (authStyle ?? "").Trim().ToLowerInvariant();
+            if (authStyle != "bearer" && authStyle != "x-api-key") throw new ArgumentException("无效的鉴权方式", "authStyle");
+            lock (_gate)
+            {
+                var item = _providers.OfType<JObject>().FirstOrDefault(value => string.Equals((string)value["id"], id, StringComparison.Ordinal));
+                if (item == null) throw new KeyNotFoundException("API 配置不存在");
+                item["authStyle"] = authStyle;
+                item["updatedAt"] = NowIso();
+                Save();
+                return Public(item);
             }
         }
 
@@ -163,7 +219,7 @@ namespace ClaudeCodeWorkbench
                     }
                 }
             }
-            catch (Exception error) { CrashLog.Write("ProviderMigration", error); }
+            catch (Exception error) { CrashLog.Handled("ProviderMigration", error); }
 
             if (output.Count == 0)
             {
@@ -210,6 +266,14 @@ namespace ClaudeCodeWorkbench
                 ["baseUrl"] = (((string)source["baseUrl"] ?? "").Trim().TrimEnd('/')),
                 ["models"] = models
             };
+        }
+
+        private static void ValidateEndpoint(string value, string label)
+        {
+            Uri endpoint;
+            if (!Uri.TryCreate((value ?? "").Trim(), UriKind.Absolute, out endpoint) ||
+                (endpoint.Scheme != Uri.UriSchemeHttp && endpoint.Scheme != Uri.UriSchemeHttps))
+                throw new InvalidOperationException(label + "必须是有效的 HTTP(S) 地址");
         }
 
         private static JObject Public(JObject item)

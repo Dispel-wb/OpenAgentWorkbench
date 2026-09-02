@@ -10,4 +10,4 @@ if ($process.ExitCode -ne 0) {
 }
 $db = Join-Path $root '.claude-gui-v2\agent-store.db'
 if (-not (Test-Path -LiteralPath $db)) { throw 'SQLite database missing' }
-[pscustomobject]@{ SQLiteWAL = 'OK'; SchemaV5 = 'OK'; LegacyBackup = 'OK'; IdempotentMigration = 'OK'; DurableEvents = 'OK'; RequestId = 'OK'; ToolCallAudit = 'OK'; ContextLedger = 'OK'; ArtifactStore = 'OK'; ScheduleLeaseRetryDeadLetter = 'OK'; DurableTaskFork = 'OK'; Database = $db } | Format-List
+[pscustomobject]@{ SQLiteWAL = 'OK'; SchemaV11 = 'OK'; LegacyBackup = 'OK'; IdempotentMigration = 'OK'; DurableEvents = 'OK'; RequestId = 'OK'; ToolCallAudit = 'OK'; ContextLedger = 'OK'; WorkspaceMemory = 'OK'; ArtifactStore = 'OK'; ProviderHealthLedger = 'OK'; ProviderCooldownRecovery = 'OK'; ProviderSecretRedaction = 'OK'; ScheduleRunTracking = 'OK'; ScheduleLeaseRetryDeadLetter = 'OK'; DurableTaskFork = 'OK'; Database = $db } | Format-List

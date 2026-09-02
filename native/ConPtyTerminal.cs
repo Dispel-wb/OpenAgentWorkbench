@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
@@ -10,18 +11,28 @@ using Microsoft.Win32.SafeHandles;
 
 namespace ClaudeCodeWorkbench
 {
+    internal sealed class TerminalShellProfile
+    {
+        public string Id;
+        public string Name;
+        public string Executable;
+        public string Arguments;
+    }
+
     internal static class ConPtyTerminalSelfTest
     {
         public static bool Run(string resultPath, string workspace)
         {
             try
             {
-                var marker = "CLAUDE_CONPTY_SELFTEST_" + Guid.NewGuid().ToString("N");
+                var suffix = Guid.NewGuid().ToString("N");
+                var marker = "CLAUDE_CONPTY_SELFTEST_" + suffix;
                 var output = new StringBuilder();
                 using (var session = new ConPtyTerminalSession(Path.GetFullPath(workspace), 96, 28))
                 {
                     session.Resize(101, 31);
-                    session.Write("echo " + marker);
+                    if (session.ShellId == "cmd") session.Write("set WORKBENCH_TEST_SUFFIX=" + suffix + "&echo CLAUDE_CONPTY_SELFTEST_%WORKBENCH_TEST_SUFFIX%");
+                    else session.Write("Write-Output ('CLAUDE_CONPTY_SELFTEST_' + '" + suffix + "')");
                     var expires = DateTime.UtcNow.AddSeconds(6);
                     while (DateTime.UtcNow < expires && output.ToString().IndexOf(marker, StringComparison.Ordinal) < 0)
                     {
@@ -51,17 +62,23 @@ namespace ClaudeCodeWorkbench
         private readonly FileStream _input;
         private readonly FileStream _outputStream;
         private readonly Process _process;
+        private readonly NativeJobObject _jobObject;
         private readonly Decoder _decoder = Encoding.UTF8.GetDecoder();
         private IntPtr _pseudoConsole;
         private bool _disposed;
 
         public readonly string Id = Guid.NewGuid().ToString("N");
         public readonly string Workspace;
+        public readonly string ShellId;
+        public readonly string ShellName;
         public bool Alive { get { try { return !_disposed && _process != null && !_process.HasExited; } catch { return false; } } }
 
-        public ConPtyTerminalSession(string workspace, short columns = 120, short rows = 36)
+        public ConPtyTerminalSession(string workspace, short columns = 120, short rows = 36, string shell = "powershell")
         {
             Workspace = workspace;
+            var profile = ResolveShell(shell);
+            ShellId = profile.Id;
+            ShellName = profile.Name;
             IntPtr inputRead = IntPtr.Zero, inputWrite = IntPtr.Zero, outputRead = IntPtr.Zero, outputWrite = IntPtr.Zero;
             IntPtr attributeList = IntPtr.Zero;
             var processInfo = new ProcessInformation();
@@ -83,20 +100,23 @@ namespace ClaudeCodeWorkbench
                 var startup = new StartupInfoEx(); startup.StartupInfo.cb = Marshal.SizeOf(typeof(StartupInfoEx)); startup.AttributeList = attributeList;
                 // /D disables per-user cmd AutoRun hooks. Those hooks are unnecessary in the
                 // embedded terminal and some shell injectors fail to initialise under ConPTY.
-                var command = new StringBuilder(Path.Combine(Environment.SystemDirectory, "cmd.exe") + " /D /Q /K");
-                Check(CreateProcess(null, command, IntPtr.Zero, IntPtr.Zero, false, ExtendedStartupInfoPresent | CreateUnicodeEnvironment, IntPtr.Zero, workspace, ref startup, out processInfo), "CreateProcess(cmd.exe)");
+                var command = new StringBuilder("\"" + profile.Executable + "\"" + (profile.Arguments.Length > 0 ? " " + profile.Arguments : ""));
+                Check(CreateProcess(profile.Executable, command, IntPtr.Zero, IntPtr.Zero, false, ExtendedStartupInfoPresent | CreateUnicodeEnvironment, IntPtr.Zero, workspace, ref startup, out processInfo), "CreateProcess(" + profile.Id + ")");
                 // Microsoft requires the ConPTY-facing pipe ends to remain open until
                 // the hosted process has connected, then be released by this host.
                 CloseHandle(inputRead); inputRead = IntPtr.Zero; CloseHandle(outputWrite); outputWrite = IntPtr.Zero;
                 _process = Process.GetProcessById((int)processInfo.ProcessId);
                 _process.EnableRaisingEvents = true; _process.Exited += (sender, args) => Enqueue("\r\n[ConPTY 已退出]\r\n");
+                _jobObject = NativeJobObject.Attach(_process);
                 CloseHandle(processInfo.Thread); processInfo.Thread = IntPtr.Zero; CloseHandle(processInfo.Process); processInfo.Process = IntPtr.Zero;
                 // CreatePipe returns synchronous handles. FileStream may still expose ReadAsync,
                 // but it must not be told that the underlying handle was opened for OVERLAPPED I/O.
                 _input = new FileStream(new SafeFileHandle(inputWrite, true), FileAccess.Write, 4096, false); inputWrite = IntPtr.Zero;
                 _outputStream = new FileStream(new SafeFileHandle(outputRead, true), FileAccess.Read, 4096, false); outputRead = IntPtr.Zero;
                 Task.Run((Func<Task>)PumpOutput);
-                Write("chcp 65001>nul");
+                if (ShellId == "cmd") Write("chcp 65001>nul");
+                else if (ShellId == "powershell" || ShellId == "pwsh")
+                    Write("[Console]::InputEncoding=New-Object Text.UTF8Encoding $false;[Console]::OutputEncoding=New-Object Text.UTF8Encoding $false;$OutputEncoding=[Console]::OutputEncoding");
             }
             catch
             {
@@ -132,7 +152,7 @@ namespace ClaudeCodeWorkbench
         public string Read() { lock (_gate) { var result = new StringBuilder(); while (_output.Count > 0) result.Append(_output.Dequeue()); return result.ToString(); } }
         public void Write(string command)
         {
-            WriteRaw((command ?? "") + "\r\n");
+            WriteRaw((command ?? "") + "\r");
         }
         public void WriteRaw(string value)
         {
@@ -143,10 +163,56 @@ namespace ClaudeCodeWorkbench
         public void Dispose()
         {
             if (_disposed) return; _disposed = true;
+            try { if (_jobObject != null) _jobObject.Terminate(0); } catch { }
             try { _input.Dispose(); } catch { } try { _outputStream.Dispose(); } catch { }
             try { if (_process != null && !_process.HasExited) _process.Kill(); } catch { }
             try { if (_process != null) _process.Dispose(); } catch { }
+            try { if (_jobObject != null) _jobObject.Dispose(); } catch { }
             if (_pseudoConsole != IntPtr.Zero) { ClosePseudoConsole(_pseudoConsole); _pseudoConsole = IntPtr.Zero; }
+        }
+
+        public static TerminalShellProfile[] AvailableShells()
+        {
+            var profiles = new List<TerminalShellProfile>();
+            var system = Environment.SystemDirectory;
+            // The desktop process can inherit a third-party PSModulePath. On machines
+            // using AllSigned this may block the embedded shell behind a publisher
+            // trust prompt before the first command is accepted. The override is
+            // process-scoped to this child shell and never changes the user's policy.
+            AddProfile(profiles, "powershell", "Windows PowerShell", Path.Combine(system, "WindowsPowerShell", "v1.0", "powershell.exe"), "-NoLogo -NoProfile -NoExit -ExecutionPolicy Bypass");
+            var pwsh = FindPwsh();
+            AddProfile(profiles, "pwsh", "PowerShell 7", pwsh, "-NoLogo -NoProfile -NoExit -ExecutionPolicy Bypass");
+            AddProfile(profiles, "cmd", "Command Prompt", Path.Combine(system, "cmd.exe"), "/D /Q /K");
+            AddProfile(profiles, "wsl", "WSL", Path.Combine(system, "wsl.exe"), "");
+            return profiles.ToArray();
+        }
+
+        private static TerminalShellProfile ResolveShell(string id)
+        {
+            var profiles = AvailableShells();
+            var selected = profiles.FirstOrDefault(value => string.Equals(value.Id, id, StringComparison.OrdinalIgnoreCase));
+            if (selected != null) return selected;
+            selected = profiles.FirstOrDefault(value => value.Id == "powershell") ?? profiles.FirstOrDefault(value => value.Id == "cmd");
+            if (selected == null) throw new InvalidOperationException("没有可用的终端 Shell");
+            return selected;
+        }
+
+        private static void AddProfile(List<TerminalShellProfile> profiles, string id, string name, string executable, string arguments)
+        {
+            if (!string.IsNullOrWhiteSpace(executable) && File.Exists(executable))
+                profiles.Add(new TerminalShellProfile { Id = id, Name = name, Executable = executable, Arguments = arguments ?? "" });
+        }
+
+        private static string FindPwsh()
+        {
+            var root = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "PowerShell");
+            if (!Directory.Exists(root)) return "";
+            try
+            {
+                return Directory.EnumerateFiles(root, "pwsh.exe", SearchOption.AllDirectories)
+                    .OrderByDescending(path => path, StringComparer.OrdinalIgnoreCase).FirstOrDefault() ?? "";
+            }
+            catch { return ""; }
         }
         private static void Check(bool success, string operation) { if (!success) throw new InvalidOperationException(operation + " 失败，Win32=" + Marshal.GetLastWin32Error()); }
 

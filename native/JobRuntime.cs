@@ -89,6 +89,22 @@ namespace ClaudeCodeWorkbench
             lock (_gate) TransitionLocked(next, message, details);
         }
 
+        public void ReconcileTerminal(string terminal, string message, JObject details = null)
+        {
+            if (terminal != JobStates.Completed && terminal != JobStates.Failed && terminal != JobStates.Cancelled)
+                throw new ArgumentException("Only a terminal state can be reconciled.", "terminal");
+            lock (_gate)
+            {
+                // status.json is written by the Worker before job-state.json and SQLite. If the
+                // Host exits between those writes, normal transition rules are intentionally too
+                // strict (for example queued -> completed or cancelled -> failed). Once there is
+                // no live Worker, the terminal disk status is the authoritative recovery record.
+                _value["state"] = terminal; _value["message"] = message ?? ""; _value["updatedAt"] = ProviderStore.NowIso();
+                if (details != null) _value["details"] = details; else _value.Remove("details");
+                Save();
+            }
+        }
+
         private void TransitionLocked(string next, string message, JObject details)
         {
             var current = (string)_value["state"] ?? JobStates.Queued;

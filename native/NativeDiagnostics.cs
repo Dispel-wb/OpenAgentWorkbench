@@ -58,11 +58,13 @@ namespace ClaudeCodeWorkbench
                     ["os"] = Environment.OSVersion.VersionString, ["is64Bit"] = Environment.Is64BitProcess,
                     ["machine"] = Environment.MachineName, ["user"] = "[REDACTED]", ["workspace"] = workspace ?? "",
                     ["executable"] = executable, ["executableSha256"] = File.Exists(executable) ? Sha256(executable) : "",
-                    ["processId"] = Process.GetCurrentProcess().Id, ["eventStore"] = store.Health()
+                    ["processId"] = Process.GetCurrentProcess().Id, ["eventStore"] = store.Health(),
+                    ["claudeRuntime"] = NativeWorkerHandle.ClaudeRuntimeDiagnostics(false)
                 };
                 WriteJson(Path.Combine(staging, "manifest.json"), SecretRedactor.Sanitize(manifest));
                 CopyJsonSummary(AppPaths.SettingsFile, Path.Combine(staging, "settings.sanitized.json"));
                 CopyJsonSummary(Path.Combine(AppPaths.Data, "runtime-state.json"), Path.Combine(staging, "runtime-state.sanitized.json"));
+                WriteJson(Path.Combine(staging, "native-metrics.sanitized.json"), SecretRedactor.Sanitize(NativeMetrics.Snapshot()));
                 CopyRedactedLog(Path.Combine(AppPaths.Data, "native-runtime.log"), Path.Combine(staging, "native-runtime.log"));
                 CopyRedactedLog(Path.Combine(AppPaths.Data, "native-crash.log"), Path.Combine(staging, "native-crash.log"));
                 WriteJson(Path.Combine(staging, "schedules.sanitized.json"), SecretRedactor.Sanitize(store.ListSchedules(true)));

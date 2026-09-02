@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Concurrent;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Text;
 using System.Threading;
@@ -16,7 +17,18 @@ namespace ClaudeCodeWorkbench
         private readonly AgentEventStore _eventStore;
         private NativeHost _window;
 
-        public PermissionBroker(AgentEventStore eventStore) { _eventStore = eventStore; }
+        public event Action Changed;
+
+        public PermissionBroker(AgentEventStore eventStore)
+        {
+            _eventStore = eventStore;
+            foreach (var token in _eventStore.ListOpenApprovals())
+            {
+                var item = Approval.Restore(token as JObject);
+                if (item != null) { Enrich(item); _items[item.Id] = item; }
+            }
+            Cleanup();
+        }
 
         public void AttachWindow(NativeHost window) { _window = window; }
 
@@ -33,6 +45,7 @@ namespace ClaudeCodeWorkbench
                     ToolName = ((string)body["toolName"] ?? "未知工具").Trim(), Input = body["input"] ?? new JObject(),
                     CreatedAt = DateTime.UtcNow
                 };
+                Enrich(item);
                 var policyPath = Path.Combine(AppPaths.Runs, item.JobId, "security-policy.json");
                 var policy = JsonUtil.Read(policyPath, new JObject()) as JObject;
                 var security = TaskSecurityPolicy.Evaluate(policy, item.ToolName, item.Input);
@@ -42,15 +55,13 @@ namespace ClaudeCodeWorkbench
                 _items[item.Id] = item;
                 _eventStore.RecordApproval(item.Id, item.JobId, item.ToolName, item.State, item.Input, new JObject
                 { ["behavior"] = item.State, ["capability"] = item.Capability, ["risk"] = item.Risk, ["reason"] = item.Reason });
+                NotifyChanged();
                 if (item.State == "pending" && _window != null) _window.ShowNotification("Claude Code 请求权限", item.ToolName + " 正在等待允许或拒绝");
                 await Write(context.Response, new JObject { ["id"] = item.Id, ["state"] = item.State == "pending" ? "pending" : "completed", ["automatic"] = item.State != "pending" }); return true;
             }
             if (method == "GET" && path == "/api/permissions/pending")
             {
-                var result = new JArray();
-                foreach (var item in _items.Values)
-                    if (item.State == "pending") result.Add(item.Public());
-                await Write(context.Response, result); return true;
+                await Write(context.Response, PendingSnapshot()); return true;
             }
             if (method == "POST" && path == "/api/permissions/respond")
             {
@@ -59,10 +70,20 @@ namespace ClaudeCodeWorkbench
                 if (!_items.TryGetValue(((string)body["id"] ?? "").Trim(), out item))
                 { await Write(context.Response, new JObject { ["error"] = "审批请求不存在或已过期" }, 404); return true; }
                 var behavior = ((string)body["behavior"] ?? "deny").Trim().ToLowerInvariant();
-                item.State = behavior == "allow" ? "allow" : "deny";
-                item.Message = ((string)body["message"] ?? "用户在图形界面中拒绝了此操作").Trim();
+                var alreadyHandled = false;
+                lock (item)
+                {
+                    alreadyHandled = item.State != "pending";
+                    if (!alreadyHandled)
+                    {
+                        item.State = behavior == "allow" ? "allow" : "deny";
+                        item.Message = ((string)body["message"] ?? "用户在图形界面中拒绝了此操作").Trim();
+                    }
+                }
+                if (alreadyHandled) { await Write(context.Response, new JObject { ["error"] = "审批请求已经处理", ["state"] = item.State }, 409); return true; }
                 _eventStore.RecordApproval(item.Id, item.JobId, item.ToolName, item.State, item.Input, new JObject
                 { ["behavior"] = item.State, ["capability"] = item.Capability, ["risk"] = item.Risk, ["reason"] = item.Reason, ["message"] = item.Message });
+                NotifyChanged();
                 await Write(context.Response, new JObject { ["ok"] = true, ["state"] = item.State }); return true;
             }
             if (method == "GET" && path.StartsWith("/api/permissions/result/", StringComparison.Ordinal))
@@ -70,11 +91,17 @@ namespace ClaudeCodeWorkbench
                 var id = path.Substring("/api/permissions/result/".Length);
                 Approval item;
                 if (!_items.TryGetValue(id, out item)) { await Write(context.Response, new JObject { ["state"] = "expired" }, 404); return true; }
-                if (item.State == "pending") { await Write(context.Response, new JObject { ["state"] = "pending" }); return true; }
-                var payload = item.State == "allow"
-                    ? new JObject { ["behavior"] = "allow", ["updatedInput"] = item.Input.DeepClone() }
-                    : new JObject { ["behavior"] = "deny", ["message"] = item.Message };
-                Approval removed; _items.TryRemove(id, out removed);
+                JObject payload = null; var stillPending = false;
+                lock (item)
+                {
+                    stillPending = item.State == "pending";
+                    if (!stillPending) payload = item.State == "allow"
+                            ? new JObject { ["behavior"] = "allow", ["updatedInput"] = item.Input.DeepClone() }
+                            : new JObject { ["behavior"] = "deny", ["message"] = item.Message };
+                }
+                if (stillPending) { await Write(context.Response, new JObject { ["state"] = "pending" }); return true; }
+                Approval removed; _items.TryRemove(id, out removed); _eventStore.CloseApproval(id, "consumed");
+                NotifyChanged();
                 await Write(context.Response, new JObject { ["state"] = "completed", ["decision"] = payload }); return true;
             }
             await Write(context.Response, new JObject { ["error"] = "审批接口不存在" }, 404); return true;
@@ -82,8 +109,40 @@ namespace ClaudeCodeWorkbench
 
         private void Cleanup()
         {
+            var changed = false;
             foreach (var pair in _items)
-                if ((DateTime.UtcNow - pair.Value.CreatedAt).TotalMinutes > 20) { Approval ignored; _items.TryRemove(pair.Key, out ignored); }
+                if ((DateTime.UtcNow - pair.Value.CreatedAt).TotalMinutes > 20)
+                { Approval ignored; if (_items.TryRemove(pair.Key, out ignored)) { _eventStore.CloseApproval(pair.Key, "expired"); changed = true; } }
+            if (changed) NotifyChanged();
+        }
+
+        public JArray PendingSnapshot()
+        {
+            Cleanup();
+            var result = new JArray();
+            foreach (var item in _items.Values.OrderBy(value => value.CreatedAt)) if (item.State == "pending") result.Add(item.Public());
+            return result;
+        }
+
+        private void NotifyChanged()
+        {
+            try { var handler = Changed; if (handler != null) handler(); } catch { }
+        }
+
+        public int PendingCount(string jobId)
+        {
+            Cleanup();
+            var count = 0;
+            foreach (var item in _items.Values) if (item.State == "pending" && string.Equals(item.JobId, jobId, StringComparison.Ordinal)) count++;
+            return count;
+        }
+
+        private static void Enrich(Approval item)
+        {
+            var request = JsonUtil.Read(Path.Combine(AppPaths.Runs, item.JobId ?? "", "request.json"), new JObject()) as JObject ?? new JObject();
+            item.SessionId = (string)request["guiSessionId"] ?? (string)request["sessionId"] ?? "";
+            item.Workspace = (string)request["sourceWorkspace"] ?? (string)request["workspace"] ?? "";
+            item.Model = (string)request["model"] ?? "";
         }
 
         private static async Task Write(HttpListenerResponse response, JToken data, int status = 200)
@@ -95,10 +154,23 @@ namespace ClaudeCodeWorkbench
 
         private sealed class Approval
         {
-            public string Id, JobId, ToolName, State = "pending", Message = "", Capability = "unknown", Risk = "high", Reason = "";
+            public string Id, JobId, SessionId, Workspace, Model, ToolName, State = "pending", Message = "", Capability = "unknown", Risk = "high", Reason = "";
             public JToken Input;
             public DateTime CreatedAt;
-            public JObject Public() { return new JObject { ["id"] = Id, ["jobId"] = JobId, ["toolName"] = ToolName, ["input"] = Input.DeepClone(), ["capability"] = Capability, ["risk"] = Risk, ["reason"] = Reason, ["createdAt"] = CreatedAt.ToString("o") }; }
+            public JObject Public() { return new JObject { ["id"] = Id, ["jobId"] = JobId, ["sessionId"] = SessionId, ["workspace"] = Workspace, ["model"] = Model, ["toolName"] = ToolName, ["input"] = SecretRedactor.Sanitize(Input), ["capability"] = Capability, ["risk"] = Risk, ["reason"] = Reason, ["createdAt"] = CreatedAt.ToString("o") }; }
+            public static Approval Restore(JObject value)
+            {
+                if (value == null) return null;
+                DateTime created; if (!DateTime.TryParse((string)value["createdAt"], out created)) created = DateTime.UtcNow;
+                var decision = value["decision"] as JObject ?? new JObject();
+                return new Approval
+                {
+                    Id = (string)value["id"] ?? "", JobId = (string)value["runId"] ?? "", ToolName = (string)value["toolName"] ?? "未知工具",
+                    State = (string)value["state"] ?? "pending", Input = value["input"]?.DeepClone() ?? new JObject(), CreatedAt = created.ToUniversalTime(),
+                    Capability = (string)decision["capability"] ?? "unknown", Risk = (string)decision["risk"] ?? "high",
+                    Reason = (string)decision["reason"] ?? "", Message = (string)decision["message"] ?? "用户在图形界面中拒绝了此操作"
+                };
+            }
         }
     }
 
@@ -147,16 +219,20 @@ namespace ClaudeCodeWorkbench
             var protectedSecret = Environment.GetEnvironmentVariable("CLAUDE_GUI_PERMISSION_SECRET_PROTECTED") ?? "";
             var secret = protectedSecret.Length == 0 ? "" : SecretStore.Unprotect(protectedSecret);
             var jobId = Environment.GetEnvironmentVariable("CLAUDE_GUI_PERMISSION_JOB") ?? "";
+            int approvalTimeout;
+            if (!int.TryParse(Environment.GetEnvironmentVariable("CLAUDE_GUI_PERMISSION_TIMEOUT_SECONDS"), out approvalTimeout)) approvalTimeout = 600;
+            approvalTimeout = Math.Max(5, Math.Min(3600, approvalTimeout));
             if (baseUrl.Length == 0 || secret.Length == 0) throw new InvalidOperationException("GUI permission broker is unavailable");
             var created = Request(baseUrl + "api/permissions/request", secret, "POST", new JObject
             {
                 ["jobId"] = jobId, ["toolName"] = (string)arguments["tool_name"] ?? "未知工具", ["input"] = arguments["input"] ?? new JObject()
             });
             var id = (string)created["id"] ?? "";
-            for (var attempt = 0; attempt < 2400; attempt++)
+            for (var attempt = 0; attempt < approvalTimeout * 4; attempt++)
             {
                 Thread.Sleep(250);
                 var state = Request(baseUrl + "api/permissions/result/" + id, secret, "GET", null);
+                if ((string)state["state"] == "expired") return new JObject { ["content"] = new JArray(new JObject { ["type"] = "text", ["text"] = new JObject { ["behavior"] = "deny", ["message"] = "GUI 审批已过期或 Host 已清理请求" }.ToString(Formatting.None) }) };
                 if ((string)state["state"] != "completed") continue;
                 var decision = state["decision"] as JObject ?? new JObject { ["behavior"] = "deny", ["message"] = "审批返回无效" };
                 return new JObject { ["content"] = new JArray(new JObject { ["type"] = "text", ["text"] = decision.ToString(Formatting.None) }) };

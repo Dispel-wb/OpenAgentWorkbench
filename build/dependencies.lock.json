@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "packages": [
+    {
+      "id": "microsoft.net.compilers.toolset",
+      "version": "4.14.0",
+      "sha256": "941A9CF3EA618D88D01A3DD6B1A45A06BCF07716A9F81CE4031CAA3EDD24A845"
+    },
+    {
+      "id": "microsoft.web.webview2",
+      "version": "1.0.3856.49",
+      "sha256": "BC0F76EB911B569838DC4AA8F8D325269B966BEDB592863D26211AEF3A099F1A"
+    },
+    {
+      "id": "newtonsoft.json",
+      "version": "13.0.3",
+      "sha256": "872FC189E638AB1056555B03AAA38F68BCB54286E221AA646EB1129BABF63C77"
+    }
+  ]
+}

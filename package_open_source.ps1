@@ -1,6 +1,6 @@
 param(
     [string]$Destination = '',
-    [string]$Version = '0.1.0-preview.1'
+    [string]$Version = '0.7.0-preview.1'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -19,7 +19,11 @@ if (-not $destinationPath.StartsWith($allowedParent + [IO.Path]::DirectorySepara
 }
 
 if (Test-Path -LiteralPath $destinationPath) {
-    Remove-Item -LiteralPath $destinationPath -Recurse -Force
+    Get-ChildItem -LiteralPath $destinationPath -Force | Where-Object { $_.Name -ne '.git' } | ForEach-Object {
+        $candidate = [IO.Path]::GetFullPath($_.FullName)
+        if (-not $candidate.StartsWith($destinationPath + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw "Unsafe staging cleanup path: $candidate" }
+        Remove-Item -LiteralPath $candidate -Recurse -Force
+    }
 }
 New-Item -ItemType Directory -Path $destinationPath -Force | Out-Null
 
@@ -29,12 +33,16 @@ function Copy-PublicFile {
     if (-not (Test-Path -LiteralPath $from -PathType Leaf)) { throw "Missing public source file: $RelativePath" }
     $to = Join-Path $destinationPath $RelativePath
     New-Item -ItemType Directory -Path (Split-Path -Parent $to) -Force | Out-Null
-    Copy-Item -LiteralPath $from -Destination $to -Force
+    # Public sources are text-only; canonical line endings match .gitattributes in every checkout.
+    $content = [IO.File]::ReadAllText($from).Replace("`r`n", "`n")
+    [IO.File]::WriteAllText($to, $content, [Text.UTF8Encoding]::new($false))
 }
 
-foreach ($file in @('.gitignore','LICENSE','README.md','SECURITY.md','THIRD_PARTY_NOTICES.md','build_exe.ps1','package_open_source.ps1')) {
+foreach ($file in @('.gitignore','LICENSE','README.md','SECURITY.md','THIRD_PARTY_NOTICES.md','CONTRIBUTING.md','CODE_OF_CONDUCT.md','CHANGELOG.md','GOVERNANCE.md','build_exe.ps1','package_open_source.ps1','restore_build_dependencies.ps1','install_dsh_runtime.ps1','runtimes\dsh\package.json','runtimes\dsh\package-lock.json')) {
     Copy-PublicFile $file
 }
+Copy-PublicFile '.gitattributes'
+Copy-PublicFile 'build\dependencies.lock.json'
 Get-ChildItem -LiteralPath (Join-Path $resolvedSource 'third_party') -File | ForEach-Object {
     Copy-PublicFile (Join-Path 'third_party' $_.Name)
 }
@@ -44,46 +52,31 @@ Get-ChildItem -LiteralPath (Join-Path $resolvedSource 'native') -File | Where-Ob
 }
 
 foreach ($file in @('static\index.html','static\app.js','static\styles.css')) { Copy-PublicFile $file }
+Get-ChildItem -LiteralPath (Join-Path $resolvedSource 'static\modules') -File -Filter '*.js' | ForEach-Object {
+    Copy-PublicFile (Join-Path 'static\modules' $_.Name)
+}
 Get-ChildItem -LiteralPath (Join-Path $resolvedSource 'static\vendor') -File | ForEach-Object {
     Copy-PublicFile (Join-Path 'static\vendor' $_.Name)
 }
 
-$publicTests = @(
-    'edition-smoke.ps1',
-    'event-store-selftest.ps1',
-    'fake-claude-worker.cs',
-    'native-agent-fault-stress.ps1',
-    'native-agent-integration.ps1',
-    'native-diagnostics-selftest.ps1',
-    'native-installer-selftest.ps1',
-    'native-m2-integration.ps1',
-    'native-m3-queue-integration.ps1',
-    'native-soak.ps1',
-    'native-updater-selftest.ps1',
-    'native-worker-selftest.ps1',
-    'native_adapter_smoke.js',
-    'native_offline_smoke.js',
-    'permission-demo.cs',
-    'process-split-native.ps1',
-    'skill-catalog-selftest.ps1',
-    'smoke-native.ps1',
-    'task-security-selftest.ps1',
-    'task-workspace-selftest.ps1',
-    'ui-contract-selftest.js',
-    'ui-host-reconnect.ps1',
-    'ui-resilience.ps1'
-)
-foreach ($file in $publicTests) {
-    $candidate = Join-Path $resolvedSource (Join-Path 'tests' $file)
-    if (Test-Path -LiteralPath $candidate -PathType Leaf) { Copy-PublicFile (Join-Path 'tests' $file) }
+Get-ChildItem -LiteralPath (Join-Path $resolvedSource 'tests') -File | Where-Object {
+    $_.Extension -in @('.ps1','.js','.cs','.md') -and $_.Name -notmatch '(?i)(result|debug|runner-error|stdout|stderr)'
+} | ForEach-Object { Copy-PublicFile (Join-Path 'tests' $_.Name) }
+
+foreach ($document in @('THREAT_MODEL.md','AGENT_WORKER_SDK.md','ARCHITECTURE.md','DEVELOPMENT.md','DATA_MODEL.md','BUILD_REPRODUCIBILITY.md','WINDOWS_TEST_MATRIX.md','RELEASE_PROCESS.md','VALIDATION_STATUS.md')) {
+    Copy-PublicFile (Join-Path 'docs' $document)
+}
+
+Get-ChildItem -LiteralPath (Join-Path $resolvedSource '.github') -Recurse -File | ForEach-Object {
+    Copy-PublicFile $_.FullName.Substring($resolvedSource.Length + 1)
 }
 
 $manifest = [ordered]@{
     product = 'Open Agent Workbench'
     release = $Version
     edition = 'opensource'
-    generatedUtc = [DateTime]::UtcNow.ToString('o')
-    sourceFiles = @(Get-ChildItem -LiteralPath $destinationPath -Recurse -File | ForEach-Object { $_.FullName.Substring($destinationPath.Length + 1).Replace('\','/') } | Sort-Object)
+    sourceDateEpoch = if ($env:SOURCE_DATE_EPOCH) { $env:SOURCE_DATE_EPOCH } else { 'not-set' }
+    sourceFiles = @(Get-ChildItem -LiteralPath $destinationPath -Recurse -File | Where-Object { $_.FullName -notmatch '[\\/]\.git[\\/]' } | ForEach-Object { $_.FullName.Substring($destinationPath.Length + 1).Replace('\','/') } | Sort-Object)
     exclusions = @('local artwork','screenshots','API credentials','runtime data','transcripts','databases','logs','diagnostic bundles','legacy binaries')
 }
 $manifestPath = Join-Path $destinationPath 'PUBLIC_RELEASE_MANIFEST.json'

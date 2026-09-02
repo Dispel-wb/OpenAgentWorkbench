@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Executable,
-    [Parameter(Mandatory = $true)][ValidateSet('local','opensource')][string]$ExpectedEdition
+    [Parameter(Mandatory = $true)][ValidateSet('local','opensource')][string]$ExpectedEdition,
+    [string]$NodePath = 'C:\Program Files\nodejs\node.exe'
 )
 $ErrorActionPreference = 'Stop'
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('agent-edition-smoke-' + [guid]::NewGuid().ToString('N'))
@@ -10,7 +11,9 @@ if (-not $testRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase))
 [IO.Directory]::CreateDirectory($testRoot) | Out-Null
 $executablePath = [IO.Path]::GetFullPath($Executable)
 $env:CLAUDE_GUI_WORKSPACE = $testRoot
-$env:CLAUDE_GUI_ROOT = 'D:\softwares\ClaudeCode'
+$env:CLAUDE_GUI_ROOT = Join-Path $testRoot '应用 安装'
+$env:CLAUDE_GUI_TEST_MODE = '1'
+$env:CLAUDE_GUI_MUTEX_SCOPE = 'edition-smoke-' + [guid]::NewGuid().ToString('N')
 $process = $null
 try {
     $process = Start-Process -FilePath $executablePath -ArgumentList '--host' -WorkingDirectory $testRoot -WindowStyle Hidden -PassThru
@@ -32,9 +35,10 @@ try {
     if ($bootstrap.edition.id -ne $ExpectedEdition) { throw "Expected $ExpectedEdition edition, got $($bootstrap.edition.id)" }
     if ([bool]$bootstrap.edition.openSource -ne ($ExpectedEdition -eq 'opensource')) { throw 'Edition openSource flag mismatch' }
     if ($bootstrap.persistence.integrity -ne 'ok') { throw 'SQLite integrity failed' }
+    $claudeRuntime = Invoke-RestMethod -Uri "$base/api/workbench/runtime/claude?probe=1" -Headers $headers -TimeoutSec 15
 
-    $node = 'C:\Program Files\nodejs\node.exe'
-    & $node (Join-Path $PSScriptRoot 'native_offline_smoke.js') $runtime.port $secret
+    if (-not (Test-Path -LiteralPath $NodePath)) { throw "Node.js not found: $NodePath" }
+    & $NodePath (Join-Path $PSScriptRoot 'native_offline_smoke.js') $runtime.port $secret
     if ($LASTEXITCODE -ne 0) { throw 'Offline edition smoke failed' }
 
     [pscustomobject]@{
@@ -46,10 +50,14 @@ try {
         Workspace = $bootstrap.workspace
         HostPid = $runtime.pid
         SQLiteIntegrity = $bootstrap.persistence.integrity
+        ClaudeRuntimeAvailable = [bool]$claudeRuntime.available
+        ClaudeRuntimeSource = [string]$claudeRuntime.source
+        ClaudeRuntimeProbe = [bool]$claudeRuntime.probeOk
+        ClaudeRuntimeVersion = [string]$claudeRuntime.version
     } | Format-List
 } finally {
     if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
-    Remove-Item Env:CLAUDE_GUI_WORKSPACE -ErrorAction SilentlyContinue
+    Remove-Item Env:CLAUDE_GUI_WORKSPACE,Env:CLAUDE_GUI_ROOT,Env:CLAUDE_GUI_TEST_MODE,Env:CLAUDE_GUI_MUTEX_SCOPE -ErrorAction SilentlyContinue
     if ((Test-Path -LiteralPath $testRoot) -and $testRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {
         Remove-Item -LiteralPath $testRoot -Recurse -Force
     }

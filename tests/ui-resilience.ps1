@@ -3,7 +3,8 @@ param(
     [int]$UiPid = 0,
     [int]$Iterations = 120,
     [string]$Output = '',
-    [switch]$InjectRendererCrash
+    [switch]$InjectRendererCrash,
+    [ValidateRange(0, 8)][int]$RendererCrashCount = 0
 )
 
 $ErrorActionPreference = 'Stop'
@@ -151,6 +152,25 @@ $WM_LBUTTONUP = 0x0202
 $SWP_NOMOVE = 0x0002
 $SWP_NOZORDER = 0x0004
 $SWP_NOACTIVATE = 0x0010
+$zoomBursts = 0
+
+function Send-ZoomBurst([IntPtr]$Handle) {
+    for ($attempt = 0; $attempt -lt 3; $attempt++) {
+        try {
+            [UiResilienceNative]::SetForegroundWindow($Handle) | Out-Null
+            [System.Windows.Forms.SendKeys]::SendWait('^{ADD}')
+            [System.Windows.Forms.SendKeys]::SendWait('^{SUBTRACT}')
+            [System.Windows.Forms.SendKeys]::SendWait('^0')
+            return $true
+        }
+        catch {
+            $baseError = $_.Exception.GetBaseException()
+            if (-not ($baseError -is [ComponentModel.Win32Exception] -and $baseError.NativeErrorCode -eq 0)) { throw }
+            Start-Sleep -Milliseconds 80
+        }
+    }
+    return $false
+}
 
 for ($index = 0; $index -lt $Iterations; $index++) {
     $size = $sizes[$index % $sizes.Count]
@@ -162,10 +182,7 @@ for ($index = 0; $index -lt $Iterations; $index++) {
     [UiResilienceNative]::PostMessage($handle, $WM_LBUTTONDOWN, [IntPtr]1, $lParam) | Out-Null
     [UiResilienceNative]::PostMessage($handle, $WM_LBUTTONUP, [IntPtr]::Zero, $lParam) | Out-Null
     if (($index % 12) -eq 0) {
-        [UiResilienceNative]::SetForegroundWindow($handle) | Out-Null
-        [System.Windows.Forms.SendKeys]::SendWait('^{ADD}')
-        [System.Windows.Forms.SendKeys]::SendWait('^{SUBTRACT}')
-        [System.Windows.Forms.SendKeys]::SendWait('^0')
+        if (Send-ZoomBurst $handle) { $zoomBursts++ }
     }
     if (($index % 20) -eq 19) {
         [UiResilienceNative]::ShowWindow($handle, 6) | Out-Null
@@ -174,24 +191,33 @@ for ($index = 0; $index -lt $Iterations; $index++) {
     }
     Start-Sleep -Milliseconds 22
 }
+if ($zoomBursts -lt 1) { throw 'Zoom stress input could not be delivered to the Workbench window' }
 
+$requestedRendererCrashes = if ($RendererCrashCount -gt 0) { $RendererCrashCount } elseif ($InjectRendererCrash) { 1 } else { 0 }
 $rendererCrashRecovered = $false
+$rendererCrashesRecovered = 0
 $rendererBefore = $null
 $rendererAfter = $null
-if ($InjectRendererCrash) {
+for ($crashIndex = 0; $crashIndex -lt $requestedRendererCrashes; $crashIndex++) {
     $rendererBefore = Get-DescendantProcesses $uiPidBefore |
         Where-Object { $_.Name -eq 'msedgewebview2.exe' -and $_.CommandLine -match '--type=renderer' } |
         Select-Object -First 1
-    if ($null -eq $rendererBefore) { throw 'Workbench WebView2 renderer not found' }
+    if ($null -eq $rendererBefore) { throw "Workbench WebView2 renderer not found before crash $($crashIndex + 1)" }
     Stop-Process -Id ([int]$rendererBefore.ProcessId) -Force
     $rendererAfter = Wait-Until {
         Get-DescendantProcesses $uiPidBefore |
             Where-Object { $_.Name -eq 'msedgewebview2.exe' -and $_.CommandLine -match '--type=renderer' -and [int]$_.ProcessId -ne [int]$rendererBefore.ProcessId } |
             Select-Object -First 1
-    } { param($value) $null -ne $value } 25 'WebView2 renderer recovery'
-    Start-Sleep -Seconds 2
-    $rendererCrashRecovered = $true
+    } { param($value) $null -ne $value } 25 "WebView2 renderer recovery $($crashIndex + 1)"
+    Start-Sleep -Milliseconds 1700
+    $ui.Refresh()
+    if ($ui.HasExited -or -not $ui.Responding) { throw "UI failed after renderer crash $($crashIndex + 1)" }
+    $intermediate = [IO.Path]::Combine([IO.Path]::GetDirectoryName($Output),
+        [IO.Path]::GetFileNameWithoutExtension($Output) + "-recovery-$($crashIndex + 1).png")
+    Capture-AndCheck $handle $intermediate | Out-Null
+    $rendererCrashesRecovered++
 }
+$rendererCrashRecovered = $rendererCrashesRecovered -eq $requestedRendererCrashes -and $requestedRendererCrashes -gt 0
 
 $ui.Refresh()
 if ($ui.HasExited -or -not $ui.Responding) { throw 'UI process exited or stopped responding' }
@@ -223,7 +249,9 @@ $frame = Capture-AndCheck $handle $Output
     UiPidUnchanged = $true
     HostPid = $hostPidBefore
     HostPidUnchanged = $true
-    RendererCrashInjected = [bool]$InjectRendererCrash
+    RendererCrashInjected = $requestedRendererCrashes -gt 0
+    RendererCrashCount = $requestedRendererCrashes
+    RendererCrashesRecovered = $rendererCrashesRecovered
     RendererBefore = if ($rendererBefore) { [int]$rendererBefore.ProcessId } else { $null }
     RendererAfter = if ($rendererAfter) { [int]$rendererAfter.ProcessId } else { $null }
     RendererCrashRecovered = $rendererCrashRecovered

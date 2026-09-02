@@ -25,7 +25,11 @@ namespace ClaudeCodeWorkbench
         private readonly object _gitGate = new object();
         private readonly object _terminalGate = new object();
         private readonly AgentEventStore _eventStore;
+        private readonly Func<bool> _tryBeginUpdateMaintenance;
+        private readonly Action _cancelUpdateMaintenance;
+        private readonly Func<bool> _isUpdateMaintenance;
         private readonly Dictionary<string, ConPtyTerminalSession> _terminals = new Dictionary<string, ConPtyTerminalSession>(StringComparer.OrdinalIgnoreCase);
+        private int _activeTerminalCommands;
         private NativeHost _window;
 
         private string RegistryFile { get { return Path.Combine(AppPaths.Data, "projects.json"); } }
@@ -37,7 +41,13 @@ namespace ClaudeCodeWorkbench
             get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "projects"); }
         }
 
-        public WorkbenchApi(AgentEventStore eventStore) { _eventStore = eventStore ?? throw new ArgumentNullException("eventStore"); }
+        public WorkbenchApi(AgentEventStore eventStore, Func<bool> tryBeginUpdateMaintenance, Action cancelUpdateMaintenance, Func<bool> isUpdateMaintenance)
+        {
+            _eventStore = eventStore ?? throw new ArgumentNullException("eventStore");
+            _tryBeginUpdateMaintenance = tryBeginUpdateMaintenance ?? throw new ArgumentNullException("tryBeginUpdateMaintenance");
+            _cancelUpdateMaintenance = cancelUpdateMaintenance ?? throw new ArgumentNullException("cancelUpdateMaintenance");
+            _isUpdateMaintenance = isUpdateMaintenance ?? throw new ArgumentNullException("isUpdateMaintenance");
+        }
 
         public void AttachWindow(NativeHost window) { _window = window; }
 
@@ -48,6 +58,16 @@ namespace ClaudeCodeWorkbench
             if (method == "GET" && path == "/api/workbench/projects")
             {
                 await WriteJson(context.Response, ListProjects()); return true;
+            }
+            if (method == "GET" && path == "/api/workbench/startup")
+            {
+                await WriteJson(context.Response, NativeStartupRegistration.Status()); return true;
+            }
+            if (method == "POST" && path == "/api/workbench/startup")
+            {
+                var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
+                if (body["enabled"] == null || body["enabled"].Type != JTokenType.Boolean) { await Error(context.Response, "enabled 必须是布尔值", 400); return true; }
+                await WriteJson(context.Response, NativeStartupRegistration.SetEnabled((bool)body["enabled"])); return true;
             }
             if (method == "POST" && path == "/api/workbench/projects/add")
             {
@@ -146,13 +166,73 @@ namespace ClaudeCodeWorkbench
                 var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
                 await WriteJson(context.Response, DeleteExtension(body)); return true;
             }
+            if (method == "POST" && path == "/api/workbench/extensions/trust")
+            {
+                var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
+                await WriteJson(context.Response, TrustExtension(body)); return true;
+            }
             if (method == "GET" && path == "/api/workbench/usage")
             {
                 await WriteJson(context.Response, Usage(context.Request.QueryString["workspace"])); return true;
             }
+            if (method == "GET" && path == "/api/workbench/memories")
+            {
+                await WriteJson(context.Response, WorkspaceMemories(context.Request.QueryString["workspace"])); return true;
+            }
+            if (method == "POST" && path == "/api/workbench/memories")
+            {
+                var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
+                var workspace = NormalizeExistingDirectory((string)body["workspace"], true);
+                var memory = _eventStore.SaveWorkspaceMemory(workspace, (string)body["id"], (string)body["title"], (string)body["content"], (bool?)body["active"] ?? true);
+                await WriteJson(context.Response, new JObject { ["memory"] = memory, ["summary"] = WorkspaceMemorySummary(workspace) }); return true;
+            }
+            if (method == "POST" && path == "/api/workbench/memories/state")
+            {
+                var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
+                var workspace = NormalizeExistingDirectory((string)body["workspace"], true);
+                var memory = _eventStore.SetWorkspaceMemoryActive(workspace, (string)body["id"], (bool?)body["active"] ?? false);
+                await WriteJson(context.Response, new JObject { ["memory"] = memory, ["summary"] = WorkspaceMemorySummary(workspace) }); return true;
+            }
+            if (method == "POST" && path == "/api/workbench/memories/delete")
+            {
+                var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
+                var workspace = NormalizeExistingDirectory((string)body["workspace"], true);
+                var deleted = _eventStore.DeleteWorkspaceMemory(workspace, (string)body["id"]);
+                await WriteJson(context.Response, new JObject { ["deleted"] = deleted, ["summary"] = WorkspaceMemorySummary(workspace) }); return true;
+            }
             if (method == "GET" && path == "/api/workbench/health")
             {
                 await WriteJson(context.Response, Health(context.Request.QueryString["workspace"])); return true;
+            }
+            if (method == "GET" && path == "/api/workbench/metrics")
+            {
+                NativeMetrics.Flush();
+                await WriteJson(context.Response, NativeMetrics.Snapshot()); return true;
+            }
+            if (method == "GET" && path == "/api/workbench/runtime/claude")
+            {
+                await WriteJson(context.Response, NativeWorkerHandle.ClaudeRuntimeDiagnostics(context.Request.QueryString["probe"] == "1")); return true;
+            }
+            if (method == "GET" && path == "/api/workbench/runtime/agents")
+            {
+                await WriteJson(context.Response, AgentWorkerSdk.Diagnostics(context.Request.QueryString["probe"] == "1")); return true;
+            }
+            if (method == "POST" && path == "/api/workbench/runtime/claude/configure")
+            {
+                var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
+                var selected = ((string)body["path"] ?? "").Trim();
+                if (selected.Length == 0 && _window != null) selected = await _window.SelectClaudeExecutableAsync();
+                if (selected.Length == 0) { await WriteJson(context.Response, new JObject { ["cancelled"] = true }); return true; }
+                await WriteJson(context.Response, ConfigureClaudeRuntime(selected)); return true;
+            }
+            if (method == "POST" && path == "/api/workbench/runtime/claude/reset")
+            {
+                await WriteJson(context.Response, ResetClaudeRuntime()); return true;
+            }
+            if (method == "POST" && path == "/api/workbench/runtime/claude/command")
+            {
+                var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
+                await WriteJson(context.Response, RunClaudeCommand(body)); return true;
             }
             if (method == "POST" && path == "/api/workbench/reliability/selftest")
             {
@@ -181,19 +261,52 @@ namespace ClaudeCodeWorkbench
                 var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
                 await WriteJson(context.Response, await StageUpdate(body)); return true;
             }
+            if (method == "POST" && path == "/api/workbench/update/apply")
+            {
+                var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
+                int terminalBlockers;
+                if (!TryBeginSafeUpdate(out terminalBlockers))
+                {
+                    var message = terminalBlockers > 0
+                        ? "当前有 " + terminalBlockers + " 个终端任务或会话仍在运行，请先在终端面板中结束它们再安装更新"
+                        : "当前有 Agent 任务正在运行，更新将在任务结束后才能安装";
+                    await Error(context.Response, message, 409); return true;
+                }
+                try
+                {
+                    var result = BeginApplyUpdate(body);
+                    await WriteJson(context.Response, result);
+                    if (_window != null) _window.BeginUpdateExit(650);
+                    return true;
+                }
+                catch
+                {
+                    _cancelUpdateMaintenance();
+                    throw;
+                }
+            }
             if (method == "POST" && path == "/api/workbench/terminal")
             {
                 var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
                 var root = NormalizeExistingDirectory((string)body["workspace"], true);
                 var command = ((string)body["command"] ?? "").Trim();
                 if (command.Length == 0) { await Error(context.Response, "命令不能为空", 400); return true; }
-                var result = Run("cmd.exe", "/d /s /c " + Quote(command), root, 120000);
-                await WriteJson(context.Response, new JObject { ["exitCode"] = result.ExitCode, ["output"] = Limit(result.Output, 500000), ["error"] = Limit(result.Error, 100000) }); return true;
+                if (!TryEnterTerminalCommand()) { await Error(context.Response, "工作台正在安装更新，暂不接受新的终端命令", 503); return true; }
+                try
+                {
+                    var result = Run("cmd.exe", "/d /s /c " + Quote(command), root, 120000);
+                    await WriteJson(context.Response, new JObject { ["exitCode"] = result.ExitCode, ["output"] = Limit(result.Output, 500000), ["error"] = Limit(result.Error, 100000) }); return true;
+                }
+                finally { ExitTerminalCommand(); }
             }
             if (method == "POST" && path == "/api/workbench/terminal/start")
             {
                 var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
-                await WriteJson(context.Response, StartTerminal((string)body["workspace"])); return true;
+                await WriteJson(context.Response, StartTerminal((string)body["workspace"], (string)body["shell"])); return true;
+            }
+            if (method == "GET" && path == "/api/workbench/terminal/profiles")
+            {
+                await WriteJson(context.Response, TerminalProfiles()); return true;
             }
             if (method == "POST" && path == "/api/workbench/terminal/write")
             {
@@ -263,6 +376,10 @@ namespace ClaudeCodeWorkbench
             {
                 await WriteJson(context.Response, TaskWorkspaceManager.Describe(context.Request.QueryString["jobId"])); return true;
             }
+            if (method == "GET" && path == "/api/workbench/task/diff")
+            {
+                await WriteJson(context.Response, TaskWorkspaceManager.Diff(context.Request.QueryString["jobId"], context.Request.QueryString["path"])); return true;
+            }
             if (method == "POST" && path == "/api/workbench/task/apply")
             {
                 var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
@@ -272,6 +389,11 @@ namespace ClaudeCodeWorkbench
             {
                 var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
                 await WriteJson(context.Response, TaskWorkspaceManager.Revert((string)body["jobId"])); return true;
+            }
+            if (method == "POST" && path == "/api/workbench/task/discard")
+            {
+                var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
+                await WriteJson(context.Response, TaskWorkspaceManager.Discard((string)body["jobId"])); return true;
             }
             return false;
         }
@@ -289,7 +411,9 @@ namespace ClaudeCodeWorkbench
                 var value = ((string)token["workspace"] ?? "").Trim();
                 if (Directory.Exists(value)) paths.Add(Path.GetFullPath(value));
             }
-            foreach (var file in TranscriptFiles())
+            foreach (var file in TranscriptFiles()
+                .GroupBy(Path.GetFileNameWithoutExtension, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.OrderByDescending(File.GetLastWriteTimeUtc).First()))
             {
                 var cwd = TranscriptCwd(file);
                 if (Directory.Exists(cwd)) paths.Add(Path.GetFullPath(cwd));
@@ -301,7 +425,9 @@ namespace ClaudeCodeWorkbench
         private JObject ProjectObject(string path)
         {
             var full = Path.GetFullPath(path);
-            var transcripts = TranscriptFiles().Count(file => string.Equals(TranscriptCwd(file), full, StringComparison.OrdinalIgnoreCase));
+            var transcripts = TranscriptFiles()
+                .Where(file => string.Equals(TranscriptCwd(file), full, StringComparison.OrdinalIgnoreCase))
+                .Select(Path.GetFileNameWithoutExtension).Distinct(StringComparer.OrdinalIgnoreCase).Count();
             return new JObject
             {
                 ["path"] = full,
@@ -343,7 +469,9 @@ namespace ClaudeCodeWorkbench
             var normalizedWorkspace = NormalizeExistingDirectory(workspace, false);
             var needle = (query ?? "").Trim();
             var result = new List<JObject>();
-            foreach (var file in TranscriptFiles())
+            foreach (var file in TranscriptFiles()
+                .GroupBy(Path.GetFileNameWithoutExtension, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.OrderByDescending(File.GetLastWriteTimeUtc).First()))
             {
                 var summary = ParseTranscript(file, needle.Length > 0);
                 var cwd = (string)summary["workspace"] ?? "";
@@ -370,20 +498,26 @@ namespace ClaudeCodeWorkbench
         private string FindTranscript(string id, string workspace)
         {
             var expectedWorkspace = NormalizeExistingDirectory(workspace, false);
-            return TranscriptFiles().FirstOrDefault(file =>
-                string.Equals(Path.GetFileNameWithoutExtension(file), id, StringComparison.OrdinalIgnoreCase) &&
-                (expectedWorkspace.Length == 0 || string.Equals(TranscriptCwd(file), expectedWorkspace, StringComparison.OrdinalIgnoreCase)));
+            var candidates = TranscriptFiles().Where(file =>
+                string.Equals(Path.GetFileNameWithoutExtension(file), id, StringComparison.OrdinalIgnoreCase))
+                .OrderByDescending(File.GetLastWriteTimeUtc).ToArray();
+            if (candidates.Length == 0) return null;
+            if (expectedWorkspace.Length == 0) return candidates[0];
+            return candidates.FirstOrDefault(file =>
+                string.Equals((string)ParseTranscript(file, false)["workspace"], expectedWorkspace, StringComparison.OrdinalIgnoreCase));
         }
 
         private static string TranscriptCwd(string file)
         {
+            var mapped = TranscriptSourceWorkspace(file);
+            if (mapped.Length > 0) return mapped;
             try
             {
                 foreach (var line in ReadLinesShared(file).Take(80))
                 {
                     JObject value;
                     try { value = JObject.Parse(line); } catch { continue; }
-                    var cwd = ((string)value["cwd"] ?? "").Trim();
+                    var cwd = ((string)value["workbenchSourceCwd"] ?? (string)value["cwd"] ?? "").Trim();
                     if (cwd.Length > 0) return Path.GetFullPath(cwd);
                 }
             }
@@ -396,7 +530,7 @@ namespace ClaudeCodeWorkbench
             var messages = new JArray();
             var assistantByMessageId = new Dictionary<string, JObject>(StringComparer.OrdinalIgnoreCase);
             var title = "";
-            var cwd = "";
+            var cwd = TranscriptSourceWorkspace(file);
             var branch = "";
             var created = File.GetCreationTimeUtc(file).ToString("o");
             var updated = File.GetLastWriteTimeUtc(file).ToString("o");
@@ -409,7 +543,7 @@ namespace ClaudeCodeWorkbench
             {
                 JObject entry;
                 try { entry = JObject.Parse(line); } catch { continue; }
-                if (cwd.Length == 0) cwd = ((string)entry["cwd"] ?? "").Trim();
+                if (cwd.Length == 0) cwd = ((string)entry["workbenchSourceCwd"] ?? (string)entry["cwd"] ?? "").Trim();
                 if (branch.Length == 0) branch = ((string)entry["gitBranch"] ?? "").Trim();
                 if ((string)entry["type"] == "ai-title" && !string.IsNullOrWhiteSpace((string)entry["aiTitle"])) title = (string)entry["aiTitle"];
                 var type = (string)entry["type"] ?? "";
@@ -499,6 +633,17 @@ namespace ClaudeCodeWorkbench
                     ["cache_creation_input_tokens"] = cacheCreate, ["total_tokens"] = input + output + cacheRead + cacheCreate
                 }
             };
+        }
+
+        private static string TranscriptSourceWorkspace(string file)
+        {
+            try
+            {
+                var descriptor = JsonUtil.Read(file + ".workbench.json", new JObject()) as JObject ?? new JObject();
+                var source = ((string)descriptor["sourceWorkspace"] ?? "").Trim();
+                return source.Length > 0 ? Path.GetFullPath(source) : "";
+            }
+            catch { return ""; }
         }
 
         private static JObject ListTree(string workspace, string relative)
@@ -630,28 +775,76 @@ namespace ClaudeCodeWorkbench
             foreach (var baseDir in new[] { Path.Combine(userClaude, "skills"), Path.Combine(projectClaude, "skills") })
                 if (Directory.Exists(baseDir)) foreach (var dir in Directory.EnumerateDirectories(baseDir).Where(value => !Path.GetFileName(value).StartsWith(".", StringComparison.Ordinal)))
                 {
-                    var metadata = JsonUtil.Read(Path.Combine(dir, ".workbench-package.json"), new JObject()) as JObject ?? new JObject();
-                    skills.Add(new JObject { ["name"] = Path.GetFileName(dir), ["path"] = dir, ["scope"] = baseDir.StartsWith(projectClaude, StringComparison.OrdinalIgnoreCase) ? "project" : "user", ["packageVersion"] = metadata["version"], ["signatureStatus"] = metadata["signatureStatus"] ?? "unmanaged" });
+                    var scope = baseDir.StartsWith(projectClaude, StringComparison.OrdinalIgnoreCase) ? "project" : "user";
+                    var item = new JObject { ["name"] = Path.GetFileName(dir), ["path"] = dir, ["scope"] = scope };
+                    foreach (var property in ExtensionTrustPolicy.AssessSkill(dir, scope).Properties()) item[property.Name] = property.Value.DeepClone();
+                    skills.Add(item);
                 }
             foreach (var baseDir in new[] { Path.Combine(userClaude, "agents"), Path.Combine(projectClaude, "agents") })
                 if (Directory.Exists(baseDir)) foreach (var file in Directory.EnumerateFiles(baseDir, "*.md"))
                 {
-                    var name = Path.GetFileNameWithoutExtension(file); var metadata = JsonUtil.Read(Path.Combine(baseDir, "." + name + ".workbench-package.json"), new JObject()) as JObject ?? new JObject();
-                    agents.Add(new JObject { ["name"] = name, ["path"] = file, ["scope"] = baseDir.StartsWith(projectClaude, StringComparison.OrdinalIgnoreCase) ? "project" : "user", ["packageVersion"] = metadata["version"], ["signatureStatus"] = metadata["signatureStatus"] ?? "unmanaged" });
+                    var name = Path.GetFileNameWithoutExtension(file); var scope = baseDir.StartsWith(projectClaude, StringComparison.OrdinalIgnoreCase) ? "project" : "user";
+                    var item = new JObject { ["name"] = name, ["path"] = file, ["scope"] = scope };
+                    foreach (var property in ExtensionTrustPolicy.AssessAgent(file, scope).Properties()) item[property.Name] = property.Value.DeepClone();
+                    agents.Add(item);
                 }
             var settings = MergeSettings(Path.Combine(userClaude, "settings.json"), Path.Combine(projectClaude, "settings.json"), Path.Combine(projectClaude, "settings.local.json"));
             var mcp = JsonUtil.Read(Path.Combine(root, ".mcp.json"), new JObject()) as JObject ?? new JObject();
             var hooks = settings["hooks"] as JObject ?? new JObject();
             var plugins = settings["enabledPlugins"] as JObject ?? new JObject();
+            var trust = ExtensionTrustPolicy.WorkspaceSummary(root);
+            JObject mcpRuntime;
+            try
+            {
+                var trustedMcp = new JArray((trust["controls"] as JArray ?? new JArray()).OfType<JObject>()
+                    .Where(item => ((bool?)item["active"] ?? false) && string.Equals((string)item["kind"], "mcp", StringComparison.OrdinalIgnoreCase))
+                    .Select(item => item["path"]?.DeepClone()));
+                mcpRuntime = McpRuntimePolicy.ValidateTrustedConfigs(trustedMcp, root);
+                mcpRuntime["valid"] = true;
+            }
+            catch (Exception error)
+            {
+                mcpRuntime = new JObject { ["valid"] = false, ["error"] = error.Message, ["configCount"] = 0, ["serverCount"] = 0, ["servers"] = new JArray() };
+            }
             return new JObject
             {
                 ["skills"] = skills, ["agents"] = agents,
-                ["mcpServers"] = mcp["mcpServers"] ?? settings["mcpServers"] ?? new JObject(),
+                ["mcpServers"] = RedactedMcpServers(mcp["mcpServers"] ?? settings["mcpServers"]),
+                ["mcpRuntime"] = mcpRuntime,
                 ["hooks"] = hooks, ["plugins"] = plugins,
+                ["trust"] = trust, ["controls"] = trust["controls"]?.DeepClone() ?? new JArray(),
                 ["claudeMd"] = new JArray(FindClaudeMd(root).Take(100)),
                 ["userRoot"] = userClaude, ["projectRoot"] = projectClaude,
                 ["mcpFile"] = Path.Combine(root, ".mcp.json"), ["mcpFileExists"] = File.Exists(Path.Combine(root, ".mcp.json"))
             };
+        }
+
+        private static JObject RedactedMcpServers(JToken token)
+        {
+            var result = new JObject();
+            var servers = token as JObject ?? new JObject();
+            foreach (var property in servers.Properties())
+            {
+                var server = property.Value as JObject ?? new JObject();
+                var command = ((string)server["command"] ?? "").Trim();
+                var url = ((string)server["url"] ?? "").Trim();
+                Uri parsed;
+                if (Uri.TryCreate(url, UriKind.Absolute, out parsed)) url = parsed.GetLeftPart(UriPartial.Authority);
+                if (command.Length > 0)
+                {
+                    try { command = Path.GetFileName(command.Trim('"')); }
+                    catch { command = "configured"; }
+                }
+                result[property.Name] = new JObject
+                {
+                    ["command"] = command,
+                    ["url"] = url,
+                    ["argumentCount"] = server["args"] is JArray args ? args.Count : 0,
+                    ["environmentKeys"] = server["env"] is JObject env ? new JArray(env.Properties().Select(item => item.Name)) : new JArray(),
+                    ["redacted"] = true
+                };
+            }
+            return result;
         }
 
         private static JObject ScaffoldExtension(JObject body)
@@ -678,7 +871,33 @@ namespace ClaudeCodeWorkbench
             if (File.Exists(file)) throw new InvalidOperationException("同名扩展已经存在");
             Directory.CreateDirectory(Path.GetDirectoryName(file));
             File.WriteAllText(file, content, new UTF8Encoding(false));
-            return new JObject { ["ok"] = true, ["type"] = type, ["name"] = name, ["path"] = file };
+            var extensionPath = type == "skill" ? Path.GetDirectoryName(file) : file;
+            var trust = ExtensionTrustPolicy.SetLocalTrust(type, extensionPath, true);
+            SkillCatalog.Invalidate();
+            return new JObject { ["ok"] = true, ["type"] = type, ["name"] = name, ["path"] = file, ["trust"] = trust };
+        }
+
+        private static JObject TrustExtension(JObject body)
+        {
+            var root = NormalizeExistingDirectory((string)body["workspace"], true);
+            var type = ((string)body["type"] ?? "").Trim().ToLowerInvariant();
+            var name = ((string)body["name"] ?? "").Trim();
+            var trusted = (bool?)body["trusted"] ?? true;
+            if (type == "control")
+            {
+                var controlTrust = ExtensionTrustPolicy.SetControlTrust(root, name, trusted);
+                return new JObject { ["ok"] = true, ["type"] = type, ["name"] = name, ["trust"] = controlTrust };
+            }
+            if (name.Length < 1 || name.Any(ch => !char.IsLetterOrDigit(ch) && ch != '-' && ch != '_')) throw new InvalidOperationException("扩展名称无效");
+            var projectClaude = Path.Combine(root, ".claude");
+            string path;
+            if (type == "skill") path = ResolveInside(projectClaude, Path.Combine("skills", name));
+            else if (type == "agent") path = ResolveInside(projectClaude, Path.Combine("agents", name + ".md"));
+            else throw new InvalidOperationException("仅支持授权项目级 Skill 或 Agent");
+            if ((type == "skill" && !Directory.Exists(path)) || (type == "agent" && !File.Exists(path))) throw new FileNotFoundException("扩展不存在", path);
+            var trust = ExtensionTrustPolicy.SetLocalTrust(type, path, trusted);
+            SkillCatalog.Invalidate();
+            return new JObject { ["ok"] = true, ["type"] = type, ["name"] = name, ["trust"] = trust };
         }
 
         private static JObject DeleteExtension(JObject body)
@@ -701,6 +920,7 @@ namespace ClaudeCodeWorkbench
                 if (File.Exists(metadata)) File.Delete(metadata);
             }
             else throw new InvalidOperationException("仅支持删除项目级 Skill 或 Agent");
+            SkillCatalog.Invalidate();
             return new JObject { ["ok"] = true, ["type"] = type, ["name"] = name };
         }
 
@@ -759,7 +979,9 @@ namespace ClaudeCodeWorkbench
                 var targetDir = Path.Combine(projectClaude, "agents"); Directory.CreateDirectory(targetDir);
                 var target = ResolveInside(targetDir, id + ".md"); var incoming = target + ".incoming"; var backup = target + ".bak";
                 File.Copy(sourceFile, incoming, true); if (File.Exists(target)) File.Replace(incoming, target, backup, true); else File.Move(incoming, target);
-                JsonUtil.WriteAtomic(ResolveInside(targetDir, "." + id + ".workbench-package.json"), PackageMetadata(manifest, trust));
+                var metadata = ExtensionTrustPolicy.ManagedMetadata(PackageMetadata(manifest, trust), "agent", target, (string)trust["signatureStatus"]);
+                JsonUtil.WriteAtomic(ResolveInside(targetDir, "." + id + ".workbench-package.json"), metadata);
+                SkillCatalog.Invalidate();
                 return new JObject { ["ok"] = true, ["type"] = type, ["name"] = id, ["path"] = target, ["signatureStatus"] = trust["signatureStatus"] };
             }
             var skillFile = Path.Combine(sourceRoot, "SKILL.md");
@@ -767,11 +989,13 @@ namespace ClaudeCodeWorkbench
             var skillsRoot = Path.Combine(projectClaude, "skills"); Directory.CreateDirectory(skillsRoot);
             var targetRoot = ResolveInside(skillsRoot, id); var installRoot = ResolveInside(skillsRoot, ".install-" + id + "-" + Guid.NewGuid().ToString("N"));
             CopyDirectory(sourceRoot, installRoot, manifestPath);
-            JsonUtil.WriteAtomic(Path.Combine(installRoot, ".workbench-package.json"), PackageMetadata(manifest, trust));
+            var skillMetadata = ExtensionTrustPolicy.ManagedMetadata(PackageMetadata(manifest, trust), "skill", installRoot, (string)trust["signatureStatus"]);
+            JsonUtil.WriteAtomic(Path.Combine(installRoot, ".workbench-package.json"), skillMetadata);
             var backupRoot = ResolveInside(skillsRoot, ".backup-" + id + "-" + Guid.NewGuid().ToString("N"));
             try { if (Directory.Exists(targetRoot)) Directory.Move(targetRoot, backupRoot); Directory.Move(installRoot, targetRoot); if (Directory.Exists(backupRoot)) Directory.Delete(backupRoot, true); }
             catch { if (!Directory.Exists(targetRoot) && Directory.Exists(backupRoot)) Directory.Move(backupRoot, targetRoot); throw; }
             finally { if (Directory.Exists(installRoot)) Directory.Delete(installRoot, true); }
+            SkillCatalog.Invalidate();
             return new JObject { ["ok"] = true, ["type"] = type, ["name"] = id, ["path"] = Path.Combine(targetRoot, "SKILL.md"), ["signatureStatus"] = trust["signatureStatus"] };
         }
 
@@ -1006,8 +1230,10 @@ namespace ClaudeCodeWorkbench
             var config = JsonUtil.Read(UpdateChannelFile, new JObject { ["channel"] = "stable", ["manifestUrl"] = "", ["allowUnsignedPreview"] = false }) as JObject ?? new JObject();
             config["currentVersion"] = Program.AppContractVersion;
             config["atomicUpdater"] = true;
+            config["activeTerminalBlockers"] = ActiveTerminalBlockerCount();
             var currentExecutable = Process.GetCurrentProcess().MainModule.FileName;
             config["previousExecutable"] = Path.Combine(Path.GetDirectoryName(currentExecutable), Path.GetFileNameWithoutExtension(currentExecutable) + ".previous.exe");
+            config["lastResult"] = JsonUtil.Read(Path.Combine(AppPaths.Data, "update-result.json"), new JObject());
             return config;
         }
 
@@ -1054,6 +1280,36 @@ namespace ClaudeCodeWorkbench
             if (!signed && ((string)config["channel"] == "stable" || !((bool?)config["allowUnsignedPreview"] ?? false))) { File.Delete(staged); throw new InvalidOperationException("更新包没有受信任的 Authenticode 签名"); }
             var ready = Path.Combine(targetRoot, EditionInfo.ExecutableName); if (File.Exists(ready)) File.Delete(ready); File.Move(staged, ready);
             return new JObject { ["staged"] = true, ["path"] = ready, ["version"] = version, ["sha256"] = expected, ["signed"] = signed, ["applyCommand"] = "--apply-update <staged> <target> <sha256>" };
+        }
+
+        private JObject BeginApplyUpdate(JObject body)
+        {
+            var staged = Path.GetFullPath(((string)body["path"] ?? "").Trim());
+            var expected = ((string)body["sha256"] ?? "").Replace("-", "").Trim().ToUpperInvariant();
+            var updatesRoot = Path.GetFullPath(Path.Combine(AppPaths.Data, "updates")).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            if (!staged.StartsWith(updatesRoot, StringComparison.OrdinalIgnoreCase) || !string.Equals(Path.GetFileName(staged), EditionInfo.ExecutableName, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("更新文件不在工作台受控的更新目录中");
+            if (!File.Exists(staged)) throw new FileNotFoundException("找不到已下载的更新文件", staged);
+            if (expected.Length != 64 || expected.Any(ch => !Uri.IsHexDigit(ch)) || !string.Equals(NativeUpdater.Sha256(staged), expected, StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("安装前 SHA-256 复核失败");
+            var target = Path.GetFullPath(Process.GetCurrentProcess().MainModule.FileName);
+            if (string.Equals(staged, target, StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("更新文件不能与当前程序路径相同");
+            NativeHostWatchdog.SignalStop();
+            var arguments = "--apply-update " + Quote(staged) + " " + Quote(target) + " " + Quote(expected) + " --parent-pid " + Process.GetCurrentProcess().Id;
+            var updater = Process.Start(new ProcessStartInfo(staged, arguments)
+            {
+                UseShellExecute = false,
+                CreateNoWindow = true,
+                WindowStyle = ProcessWindowStyle.Hidden,
+                WorkingDirectory = AppPaths.Workspace
+            });
+            if (updater == null) throw new InvalidOperationException("无法启动独立更新进程");
+            JsonUtil.WriteAtomic(Path.Combine(AppPaths.Data, "update-result.json"), new JObject
+            {
+                ["state"] = "handoff", ["target"] = Path.GetFileName(target), ["sha256"] = expected,
+                ["message"] = "Host 已把更新交给独立进程，正在安全重启", ["error"] = "", ["updatedAt"] = ProviderStore.NowIso(), ["updaterPid"] = updater.Id
+            });
+            return new JObject { ["accepted"] = true, ["restarting"] = true, ["updaterPid"] = updater.Id, ["sha256"] = expected };
         }
 
         private static void ValidateReleaseManifest(JObject manifest, string channel)
@@ -1115,10 +1371,32 @@ namespace ClaudeCodeWorkbench
             };
         }
 
+        private JObject WorkspaceMemories(string workspace)
+        {
+            var normalized = NormalizeExistingDirectory(workspace, true);
+            return new JObject
+            {
+                ["workspace"] = normalized, ["items"] = _eventStore.ListWorkspaceMemories(normalized, true),
+                ["summary"] = WorkspaceMemorySummary(normalized),
+                ["limits"] = new JObject { ["activeItems"] = 32, ["itemCharacters"] = 8000, ["activeCharacters"] = 24000 }
+            };
+        }
+
+        private JObject WorkspaceMemorySummary(string workspace)
+        {
+            var active = _eventStore.ListWorkspaceMemories(workspace, false).OfType<JObject>().ToArray();
+            return new JObject
+            {
+                ["active"] = active.Length,
+                ["estimatedTokens"] = active.Sum(item => Math.Max(0L, (long?)item["estimatedTokens"] ?? 0L)),
+                ["characters"] = active.Sum(item => ((string)item["content"] ?? "").Length)
+            };
+        }
+
         private static JObject Health(string workspace)
         {
             var root = NormalizeExistingDirectory(workspace, false);
-            var claude = Path.Combine(AppPaths.ClaudeRoot, "node_modules", "@anthropic-ai", "claude-code", "bin", "claude.exe");
+            var claudeRuntime = NativeWorkerHandle.ClaudeRuntimeDiagnostics(false); var claude = (string)claudeRuntime["path"] ?? "";
             var git = Run("git.exe", "--version", root.Length > 0 ? root : AppPaths.Workspace, 5000);
             return new JObject
             {
@@ -1126,7 +1404,62 @@ namespace ClaudeCodeWorkbench
                 ["claudeExists"] = File.Exists(claude), ["git"] = git.Output.Trim(), ["gitAvailable"] = git.ExitCode == 0,
                 ["transcriptRoot"] = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "projects"),
                 ["webViewRuntime"] = true, ["terminalRuntime"] = "Windows ConPTY", ["durableJobState"] = true,
-                ["eventReplay"] = true, ["skinPackage"] = "zip", ["processModel"] = "host-ui-worker-native", ["version"] = Program.AppContractVersion
+                ["eventReplay"] = true, ["skinPackage"] = "zip", ["processModel"] = "host-ui-worker-native", ["version"] = Program.AppContractVersion,
+                ["claudeRuntime"] = claudeRuntime, ["watchdog"] = NativeHostWatchdog.Snapshot(), ["loginStartup"] = NativeStartupRegistration.Status(), ["metrics"] = NativeMetrics.Snapshot()
+            };
+        }
+
+        private static JObject ConfigureClaudeRuntime(string path)
+        {
+            string full;
+            try { full = Path.GetFullPath(path.Trim().Trim('"')); }
+            catch { throw new InvalidOperationException("Claude Code 路径无效"); }
+            if (!File.Exists(full)) throw new FileNotFoundException("找不到所选的 Claude Code 可执行文件", full);
+            if (!string.Equals(Path.GetExtension(full), ".exe", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("请选择 claude.exe，而不是脚本或快捷方式");
+            var settings = JsonUtil.Read(AppPaths.SettingsFile, new JObject()) as JObject ?? new JObject();
+            var previous = settings["claudeExecutable"];
+            settings["claudeExecutable"] = full;
+            JsonUtil.WriteAtomic(AppPaths.SettingsFile, settings);
+            var diagnostics = NativeWorkerHandle.ClaudeRuntimeDiagnostics(true);
+            if (!((bool?)diagnostics["available"] ?? false) || !((bool?)diagnostics["probeOk"] ?? false))
+            {
+                if (previous == null) settings.Remove("claudeExecutable"); else settings["claudeExecutable"] = previous;
+                JsonUtil.WriteAtomic(AppPaths.SettingsFile, settings);
+                throw new InvalidOperationException("所选文件无法作为 Claude Code 启动：" + ((string)diagnostics["probeError"] ?? "未知错误"));
+            }
+            return diagnostics;
+        }
+
+        private static JObject ResetClaudeRuntime()
+        {
+            var settings = JsonUtil.Read(AppPaths.SettingsFile, new JObject()) as JObject ?? new JObject();
+            settings.Remove("claudeExecutable"); JsonUtil.WriteAtomic(AppPaths.SettingsFile, settings);
+            return NativeWorkerHandle.ClaudeRuntimeDiagnostics(true);
+        }
+
+        private static JObject RunClaudeCommand(JObject body)
+        {
+            var runtime = NativeWorkerHandle.ClaudeRuntimeDiagnostics(false);
+            var executable = (string)runtime["path"] ?? "";
+            if (!((bool?)runtime["available"] ?? false)) throw new FileNotFoundException("Claude Code runtime 不可用，请先在设置中选择 claude.exe");
+            var kind = ((string)body["kind"] ?? "").Trim().ToLowerInvariant();
+            var action = ((string)body["action"] ?? "list").Trim().ToLowerInvariant();
+            var target = ((string)body["target"] ?? "").Trim();
+            string arguments;
+            if (kind == "mcp-list") arguments = "mcp list";
+            else if (kind == "plugin" && new[] { "list", "install", "update", "uninstall" }.Contains(action))
+            {
+                if (action != "list" && (target.Length == 0 || target.Any(ch => !(char.IsLetterOrDigit(ch) || "@./_-".Contains(ch)))))
+                    throw new InvalidOperationException("Plugin 标识包含不受支持的字符");
+                arguments = "plugin " + action + (target.Length > 0 ? " " + Quote(target) : "");
+            }
+            else throw new InvalidOperationException("不支持的 Claude Code 管理命令");
+            var root = NormalizeExistingDirectory((string)body["workspace"], false);
+            var command = Run(executable, arguments, root.Length > 0 ? root : AppPaths.Workspace, 120000);
+            return new JObject
+            {
+                ["exitCode"] = command.ExitCode, ["output"] = Limit(command.Output, 500000), ["error"] = Limit(command.Error, 100000),
+                ["runtimePath"] = executable, ["arguments"] = arguments
             };
         }
 
@@ -1147,16 +1480,26 @@ namespace ClaudeCodeWorkbench
             return new JObject { ["path"] = file, ["size"] = bytes.Length };
         }
 
-        private JObject StartTerminal(string workspace)
+        private static JArray TerminalProfiles()
+        {
+            return new JArray(ConPtyTerminalSession.AvailableShells().Select(profile => new JObject
+            {
+                ["id"] = profile.Id, ["name"] = profile.Name
+            }));
+        }
+
+        private JObject StartTerminal(string workspace, string shell)
         {
             var root = NormalizeExistingDirectory(workspace, true);
             lock (_terminalGate)
             {
-                var existing = _terminals.Values.FirstOrDefault(value => value.Alive && string.Equals(value.Workspace, root, StringComparison.OrdinalIgnoreCase));
-                if (existing != null) return new JObject { ["id"] = existing.Id, ["workspace"] = existing.Workspace, ["reused"] = true };
-                var session = new ConPtyTerminalSession(root);
+                if (_isUpdateMaintenance()) throw new InvalidOperationException("工作台正在安装更新，暂不接受新的终端会话");
+                var existing = _terminals.Values.FirstOrDefault(value => value.Alive && string.Equals(value.Workspace, root, StringComparison.OrdinalIgnoreCase) &&
+                    (string.IsNullOrWhiteSpace(shell) || string.Equals(value.ShellId, shell, StringComparison.OrdinalIgnoreCase)));
+                if (existing != null) return new JObject { ["id"] = existing.Id, ["workspace"] = existing.Workspace, ["shell"] = existing.ShellId, ["shellName"] = existing.ShellName, ["reused"] = true };
+                var session = new ConPtyTerminalSession(root, 120, 36, shell);
                 _terminals[session.Id] = session;
-                return new JObject { ["id"] = session.Id, ["workspace"] = session.Workspace };
+                return new JObject { ["id"] = session.Id, ["workspace"] = session.Workspace, ["shell"] = session.ShellId, ["shellName"] = session.ShellName };
             }
         }
 
@@ -1181,7 +1524,7 @@ namespace ClaudeCodeWorkbench
         {
             ConPtyTerminalSession session;
             lock (_terminalGate) { if (!_terminals.TryGetValue(id ?? "", out session)) return new JObject { ["alive"] = false, ["output"] = "" }; }
-            return new JObject { ["id"] = session.Id, ["alive"] = session.Alive, ["output"] = session.Read() };
+            return new JObject { ["id"] = session.Id, ["alive"] = session.Alive, ["output"] = session.Read(), ["shell"] = session.ShellId, ["shellName"] = session.ShellName };
         }
 
         private JObject StopTerminal(string id)
@@ -1197,6 +1540,41 @@ namespace ClaudeCodeWorkbench
             ConPtyTerminalSession[] sessions;
             lock (_terminalGate) { sessions = _terminals.Values.ToArray(); _terminals.Clear(); }
             foreach (var session in sessions) session.Dispose();
+        }
+
+        private bool TryEnterTerminalCommand()
+        {
+            lock (_terminalGate)
+            {
+                if (_isUpdateMaintenance()) return false;
+                _activeTerminalCommands++;
+                return true;
+            }
+        }
+
+        private void ExitTerminalCommand()
+        {
+            lock (_terminalGate) { if (_activeTerminalCommands > 0) _activeTerminalCommands--; }
+        }
+
+        private bool TryBeginSafeUpdate(out int terminalBlockers)
+        {
+            lock (_terminalGate)
+            {
+                var dead = _terminals.Where(pair => !pair.Value.Alive).Select(pair => pair.Key).ToArray();
+                foreach (var id in dead)
+                {
+                    var session = _terminals[id]; _terminals.Remove(id); session.Dispose();
+                }
+                terminalBlockers = _activeTerminalCommands + _terminals.Values.Count(value => value.Alive);
+                if (terminalBlockers > 0) return false;
+                return _tryBeginUpdateMaintenance();
+            }
+        }
+
+        private int ActiveTerminalBlockerCount()
+        {
+            lock (_terminalGate) return _activeTerminalCommands + _terminals.Values.Count(value => value.Alive);
         }
 
         private string CheckpointRoot(string sessionId)
