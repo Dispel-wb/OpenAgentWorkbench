@@ -53,7 +53,9 @@ namespace ClaudeCodeWorkbench
                 ["contentSha256"] = actual,
                 ["integrityTracked"] = integrityTracked,
                 ["publisherThumbprint"] = metadata["publisherThumbprint"] ?? "",
-                ["packageVersion"] = metadata["version"] ?? ""
+                ["packageVersion"] = metadata["version"] ?? "",
+                ["permissions"] = metadata["permissions"]?.DeepClone() ?? new JArray(),
+                ["permissionPolicy"] = metadata["permissionPolicy"] ?? "legacy-unrestricted-declaration"
             };
         }
 

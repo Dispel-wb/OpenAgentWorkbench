@@ -10,7 +10,7 @@ $source = Join-Path $PSScriptRoot 'fake-claude-worker.cs'
 & $csc /nologo /target:exe /platform:x64 "/out:$fake" "/reference:$json" $source
 if ($LASTEXITCODE -ne 0) { throw "Fake worker build failed: $LASTEXITCODE" }
 Copy-Item -LiteralPath $json -Destination (Join-Path $root 'Newtonsoft.Json.dll')
-$process = Start-Process -FilePath $Executable -ArgumentList @('--native-worker-selftest', $fake, $root) -Wait -PassThru
+$process = Start-Process -FilePath $Executable -ArgumentList @('--native-worker-selftest', $fake, $root) -WindowStyle Hidden -Wait -PassThru
 $code = $process.ExitCode
 if ($code -ne 0) {
     $detail = Join-Path $root 'selftest-error.txt'

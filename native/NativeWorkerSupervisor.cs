@@ -238,11 +238,20 @@ namespace ClaudeCodeWorkbench
             var permissionConfig = (string)request["permissionMcpConfig"] ?? "";
             var mcpConfigs = (request["mcpConfigs"] as JArray ?? new JArray()).Values<string>().Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
             if (mcpConfigs.Length == 0 && permissionConfig.Length > 0) mcpConfigs = new[] { permissionConfig };
-            if ((bool?)request["permissionBrokerEnabled"] ?? false)
+            var brokerEnabled = (bool?)request["permissionBrokerEnabled"] ?? false;
+            if (brokerEnabled)
             {
                 args.Add("--permission-mode"); args.Add("manual");
                 args.Add("--allowedTools"); args.Add("mcp__gui_permissions__approval_prompt");
                 args.Add("--permission-prompt-tool"); args.Add("mcp__gui_permissions__approval_prompt");
+                if (permissionMode == "scoped")
+                {
+                    // Tool availability is not permission to use that tool on every path.
+                    // --allowed-tools bypasses the broker; use --tools to expose the list,
+                    // and let the durable manifest decide each file/command request.
+                    args.Add("--tools");
+                    args.Add(string.Join(",", (request["allowedTools"] as JArray ?? new JArray()).Values<string>()));
+                }
             }
             else if (permissionMode == "plan") { args.Add("--permission-mode"); args.Add("plan"); }
             else if (permissionMode == "full") args.Add("--dangerously-skip-permissions");
@@ -260,7 +269,7 @@ namespace ClaudeCodeWorkbench
             if (trustedInstructions.Length > 0) { args.Add("--append-system-prompt-file"); args.Add(trustedInstructions); }
             var trustedAgents = request["trustedAgents"] as JObject;
             if (trustedAgents != null && trustedAgents.Count > 0) { args.Add("--agents"); args.Add(trustedAgents.ToString(Newtonsoft.Json.Formatting.None)); }
-            AddRepeated(args, "--allowed-tools", request["allowedTools"] as JArray);
+            if (!brokerEnabled) AddRepeated(args, "--allowed-tools", request["allowedTools"] as JArray);
             AddRepeated(args, "--disallowed-tools", request["disallowedTools"] as JArray);
             AddRepeated(args, "--add-dir", request["addDirs"] as JArray);
             return args;
@@ -330,6 +339,9 @@ namespace ClaudeCodeWorkbench
                 }) startInfo.EnvironmentVariables[name] = selectedModel;
             }
             startInfo.EnvironmentVariables["PYTHONUTF8"] = "1";
+            // The workbench owns conversation titles. A CLI title request shares the Run's
+            // adapter URL and can otherwise charge tokens or fail an unrelated active turn.
+            startInfo.EnvironmentVariables["CLAUDE_CODE_DISABLE_TERMINAL_TITLE"] = "1";
             startInfo.EnvironmentVariables["PYTHONIOENCODING"] = "utf-8";
             startInfo.EnvironmentVariables["LANG"] = "zh_CN.UTF-8";
         }

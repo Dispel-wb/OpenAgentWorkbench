@@ -62,6 +62,7 @@ $arguments = @(
     '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll',
     '/reference:System.Windows.Forms.dll', '/reference:System.Net.Http.dll', '/reference:System.Security.dll',
     '/reference:System.IO.Compression.dll', '/reference:System.IO.Compression.FileSystem.dll',
+    '/reference:System.Xml.dll', '/reference:System.Xml.Linq.dll',
     "/reference:$newtonsoft", "/reference:$webviewCore", "/reference:$webviewForms",
     "/resource:$newtonsoft,deps.Newtonsoft.Json.dll",
     "/resource:$webviewCore,deps.Microsoft.Web.WebView2.Core.dll",
@@ -75,6 +76,8 @@ $resources = [ordered]@{
     (Join-Path $root 'static\app.js') = 'static.app.js'
     (Join-Path $root 'static\styles.css') = 'static.styles.css'
     (Join-Path $root 'static\modules\ui-store.js') = 'static.modules.ui-store.js'
+    (Join-Path $root 'static\modules\document-ui.js') = 'static.modules.document-ui.js'
+    (Join-Path $root 'static\modules\workflow-ui.js') = 'static.modules.workflow-ui.js'
     (Join-Path $root 'static\modules\provider-catalog.js') = 'static.modules.provider-catalog.js'
     (Join-Path $root 'static\vendor\vue.global.prod.js') = 'static.vendor.vue.global.prod.js'
     (Join-Path $root 'static\vendor\xterm.js') = 'static.vendor.xterm.js'

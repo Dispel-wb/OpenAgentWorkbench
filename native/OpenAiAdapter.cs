@@ -384,15 +384,15 @@ namespace ClaudeCodeWorkbench
             using (var stream = await upstream.Content.ReadAsStreamAsync())
             using (var reader = new StreamReader(stream, Encoding.UTF8))
             {
-                string raw;
-                while ((raw = await ReadLineWithHeartbeat(reader, response, cancellation)) != null)
+                var frames = new SseFrameReader(reader);
+                string data;
+                while ((data = await ReadFrameWithHeartbeat(frames, response, cancellation)) != null)
                 {
-                    if (!raw.StartsWith("data:", StringComparison.Ordinal)) continue;
-                    var data = raw.Substring(5).Trim();
+                    if (string.IsNullOrWhiteSpace(data)) continue;
                     if (data == "[DONE]") { sawDoneMarker = true; break; }
                     JObject chunk;
                     try { chunk = JObject.Parse(data); }
-                    catch { continue; }
+                    catch (JsonReaderException) { throw new InvalidDataException("上游 SSE 事件的 JSON 格式无效，已保留已收到的内容"); }
                     if (chunk["error"] != null)
                     {
                         var message = (string)chunk["error"]?["message"] ?? (string)chunk["message"] ?? chunk["error"].ToString(Formatting.None);
@@ -410,6 +410,8 @@ namespace ClaudeCodeWorkbench
                     if (finishReason.Length > 0)
                     {
                         sawTerminalSignal = true;
+                        if (finishReason == "length") stopReason = "max_tokens";
+                        if (finishReason == "content_filter") throw new InvalidDataException("上游内容过滤器中止了回复");
                         if (finishReason.IndexOf("tool", StringComparison.OrdinalIgnoreCase) >= 0) stopReason = "tool_use";
                     }
                     var delta = choice["delta"] as JObject;
@@ -483,15 +485,15 @@ namespace ClaudeCodeWorkbench
             {
                 ["type"] = "message_delta",
                 ["delta"] = new JObject { ["stop_reason"] = stopReason, ["stop_sequence"] = JValue.CreateNull() },
-                ["usage"] = new JObject { ["output_tokens"] = outputTokens }
+                ["usage"] = new JObject { ["input_tokens"] = inputTokens, ["output_tokens"] = outputTokens }
             }, cancellation.Token);
             await WriteEvent(response, "message_stop", new JObject { ["type"] = "message_stop" }, cancellation.Token);
         }
 
-        private static async Task<string> ReadLineWithHeartbeat(StreamReader reader, HttpListenerResponse response,
+        private static async Task<string> ReadFrameWithHeartbeat(SseFrameReader reader, HttpListenerResponse response,
             CancellationTokenSource cancellation)
         {
-            var readTask = reader.ReadLineAsync();
+            var readTask = reader.ReadDataAsync();
             var started = DateTime.UtcNow;
             while (!readTask.IsCompleted)
             {

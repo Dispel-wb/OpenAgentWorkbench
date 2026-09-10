@@ -89,6 +89,12 @@ internal static class FakeClaudeWorker
                     }.ToString(Newtonsoft.Json.Formatting.None));
                     continue;
                 }
+                if (text.Contains("local-permission-runtime-failure"))
+                {
+                    output.WriteLine(new JObject { ["type"] = "result", ["is_error"] = true,
+                        ["result"] = "Error: MCP tool mcp__gui_permissions__approval_prompt (passed via --permission-prompt-tool) not found. Available MCP tools: none" }.ToString(Newtonsoft.Json.Formatting.None));
+                    continue;
+                }
                 if (text.Contains("compaction-event"))
                 {
                     output.WriteLine(new JObject

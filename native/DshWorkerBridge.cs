@@ -5,6 +5,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
@@ -27,7 +28,7 @@ namespace ClaudeCodeWorkbench
                     peer.Initialize();
                     emit(new JObject { ["type"] = "system", ["subtype"] = "init", ["worker"] = "dsh", ["session_id"] = config["sessionId"] });
                     string line;
-                    while ((line = input.ReadLine()) != null)
+                    while ((line = SdkFrameReader.ReadLine(input)) != null)
                     {
                         if (string.IsNullOrWhiteSpace(line)) continue;
                         var request = JObject.Parse(line);
@@ -50,9 +51,16 @@ namespace ClaudeCodeWorkbench
             private readonly Action<JObject> _emit;
             private readonly Process _process;
             private readonly NativeJobObject _job;
-            private readonly BlockingCollection<JObject> _frames = new BlockingCollection<JObject>(2048);
+            // Retain raw frames, not unbounded JObject graphs. This single budget covers
+            // both the reader mailbox and notifications waiting for a request receipt.
+            private const int MaxRetainedCharacters = 16 * 1024 * 1024;
+            private readonly BlockingCollection<string> _frames = new BlockingCollection<string>(256);
+            private readonly CancellationTokenSource _readerStop = new CancellationTokenSource();
+            private readonly Task _readerTask;
             private readonly StreamWriter _writer;
-            private readonly Queue<JObject> _pending = new Queue<JObject>();
+            private readonly Queue<string> _pending = new Queue<string>();
+            private int _retainedCharacters;
+            private volatile Exception _readerFailure;
             private int _nextId;
             private bool _disposed;
 
@@ -76,20 +84,20 @@ namespace ClaudeCodeWorkbench
                 _process = Process.Start(start);
                 _job = NativeJobObject.Attach(_process);
                 _writer = new StreamWriter(_process.StandardInput.BaseStream, Utf8, 4096, true) { AutoFlush = true };
-                Task.Run(() =>
+                _readerTask = Task.Run(() =>
                 {
                     try
                     {
                         string line;
-                        while ((line = _process.StandardOutput.ReadLine()) != null)
+                        while ((line = SdkFrameReader.ReadLine(_process.StandardOutput)) != null)
                         {
                             if (string.IsNullOrWhiteSpace(line)) continue;
-                            if (line.Length > 8 * 1024 * 1024) throw new InvalidDataException("SDK frame exceeds 8 MiB.");
-                            _frames.Add(JObject.Parse(line));
+                            QueueFrame(line);
                         }
-                        _frames.Add(new JObject { ["transportError"] = "DSHarness SDK 输出管道已关闭。" });
                     }
-                    catch (Exception error) { try { _frames.Add(new JObject { ["transportError"] = error.Message }); } catch { } }
+                    catch (OperationCanceledException) { }
+                    catch (Exception error) { _readerFailure = error; }
+                    finally { _frames.CompleteAdding(); }
                 });
                 // Keep stderr drained without accumulating an unbounded diagnostic buffer.
                 Task.Run(() => { try { var buffer = new char[4096]; int count; using (var error = new StreamWriter(Console.OpenStandardError(), Utf8) { AutoFlush = true }) while ((count = _process.StandardError.Read(buffer, 0, buffer.Length)) > 0) error.Write(buffer, 0, count); } catch { } });
@@ -111,7 +119,8 @@ namespace ClaudeCodeWorkbench
                 var received = false; var final = ""; JObject reason = null; var usage = new JObject(); var steps = 0;
                 while (true)
                 {
-                    var frame = _pending.Count > 0 ? _pending.Dequeue() : ReadFrame(120000);
+                    if (_readerFailure != null) throw new IOException(_readerFailure.Message, _readerFailure);
+                    var frame = ParseAndRelease(_pending.Count > 0 ? _pending.Dequeue() : ReadBufferedFrame(120000));
                     var method = (string)frame["method"]; var data = frame["params"] as JObject;
                     if ((string)data?["sessionId"] != sessionId) continue;
                     var ev = data?["event"] as JObject;
@@ -165,24 +174,51 @@ namespace ClaudeCodeWorkbench
                 var timer = Stopwatch.StartNew();
                 while (true)
                 {
-                    var frame = ReadFrame(Math.Max(1, timeout - (int)timer.ElapsedMilliseconds));
+                    var raw = ReadBufferedFrame(Math.Max(1, timeout - (int)timer.ElapsedMilliseconds));
+                    JObject frame;
+                    try { frame = JObject.Parse(raw); }
+                    catch { Interlocked.Add(ref _retainedCharacters, -raw.Length); throw; }
                     if ((string)frame["id"] == id.ToString())
                     {
+                        Interlocked.Add(ref _retainedCharacters, -raw.Length);
                         if (frame["error"] != null) throw new InvalidOperationException((string)frame["error"]?["message"] ?? "SDK 请求失败");
                         return frame["result"] as JObject;
                     }
-                    if (_pending.Count >= 2048) throw new InvalidDataException("SDK 在确认请求前输出了过量事件。");
-                    _pending.Enqueue(frame);
+                    if (_pending.Count >= 2048) { Interlocked.Add(ref _retainedCharacters, -raw.Length); throw new InvalidDataException("SDK 在确认请求前输出了过量事件。"); }
+                    _pending.Enqueue(raw);
                     if (timer.ElapsedMilliseconds >= timeout) throw new TimeoutException("DSHarness SDK 请求超时：" + method);
                 }
             }
 
-            private JObject ReadFrame(int timeout)
+            private void QueueFrame(string line)
             {
-                JObject frame;
-                if (!_frames.TryTake(out frame, timeout)) throw new TimeoutException("DSHarness SDK 未在规定时间内响应。");
-                if (frame["transportError"] != null) throw new IOException((string)frame["transportError"]);
+                var queued = false;
+                try
+                {
+                    if (Interlocked.Add(ref _retainedCharacters, line.Length) > MaxRetainedCharacters)
+                        throw new InvalidDataException("DSHarness SDK 事件累计缓存超过安全预算。");
+                    _frames.Add(line, _readerStop.Token);
+                    queued = true;
+                }
+                finally { if (!queued) Interlocked.Add(ref _retainedCharacters, -line.Length); }
+            }
+
+            private string ReadBufferedFrame(int timeout)
+            {
+                if (_readerFailure != null) throw new IOException(_readerFailure.Message, _readerFailure);
+                string frame;
+                if (!_frames.TryTake(out frame, timeout))
+                {
+                    if (_readerFailure != null) throw new IOException(_readerFailure.Message, _readerFailure);
+                    if (_frames.IsCompleted) throw new IOException("DSHarness SDK 输出管道已关闭。");
+                    throw new TimeoutException("DSHarness SDK 未在规定时间内响应。");
+                }
                 return frame;
+            }
+            private JObject ParseAndRelease(string frame)
+            {
+                try { return JObject.Parse(frame); }
+                finally { Interlocked.Add(ref _retainedCharacters, -frame.Length); }
             }
             private static string Text(JToken blocks) { return string.Join("", (blocks as JArray ?? new JArray()).OfType<JObject>().Where(value => (string)value["type"] == "text").Select(value => (string)value["text"] ?? "")); }
             private static void AddUsage(JObject total, JObject usage)
@@ -197,9 +233,12 @@ namespace ClaudeCodeWorkbench
             {
                 if (_disposed) return; _disposed = true;
                 try { if (!_process.HasExited) Request("shutdown", new JObject(), 3000); } catch { }
+                _readerStop.Cancel();
                 try { _writer.Dispose(); _process.StandardInput.Close(); } catch { }
                 try { if (!_process.WaitForExit(1500)) _process.Kill(); } catch { }
-                _job?.Dispose(); _process.Dispose();
+                _job?.Dispose();
+                try { if (_readerTask.Wait(1500)) { _frames.Dispose(); _readerStop.Dispose(); } } catch { }
+                _process.Dispose();
             }
         }
     }

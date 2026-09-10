@@ -5,6 +5,11 @@ const notify = (method, params) => frames({jsonrpc:'2.0',method,params});
 readline.createInterface({input:process.stdin}).on('line', line => {
   const req=JSON.parse(line), reply=result=>frames({jsonrpc:'2.0',id:req.id,result});
   if(req.method==='initialize') {
+    if(req.params.model==='fixture-oversize') { process.stdout.write('x'.repeat(8*1024*1024+1));return; }
+    if(req.params.model==='fixture-flood') { for(let i=0;i<5000;i++)frames({method:'fixture',params:{i}});return; }
+    if(req.params.model==='fixture-byte-flood') { for(let i=0;i<24;i++)frames({method:'fixture',params:{text:'中'.repeat(1024*1024)}});return; }
+    if(req.params.model==='fixture-malformed') { process.stdout.write('{invalid json}\n');return; }
+    if(req.params.model==='fixture-eof') { process.exit(0);return; }
     if(process.env.DSH_TELEMETRY_DISABLED!=='1'||process.env.DSH_PERMISSION_MODE!=='read-only') throw new Error('Unsafe launch environment');
     initialized=true; reply({serverInfo:{name:'deepseek-harness-sdk-runtime',version:'fixture'}}); return;
   }

@@ -19,8 +19,8 @@ using Newtonsoft.Json.Linq;
 [assembly: AssemblyVersion("0.7.0.0")]
 [assembly: AssemblyFileVersion("0.7.0.0")]
 #else
-[assembly: AssemblyVersion("6.4.22.0")]
-[assembly: AssemblyFileVersion("6.4.22.0")]
+[assembly: AssemblyVersion("6.4.24.0")]
+[assembly: AssemblyFileVersion("6.4.24.0")]
 #endif
 [assembly: AssemblyInformationalVersion(ClaudeCodeWorkbench.EditionInfo.ContractVersion)]
 
@@ -217,8 +217,11 @@ namespace ClaudeCodeWorkbench
             catch (Exception error)
             {
                 CrashLog.Write("Startup", error);
-                MessageBox.Show(EditionInfo.ProductName + "启动失败：\n\n" + error.Message,
-                    "启动失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                Environment.ExitCode = 1;
+                // A background Host has nobody to dismiss a modal error dialog.
+                if (args == null || !args.Any(value => string.Equals(value, "--host", StringComparison.OrdinalIgnoreCase)))
+                    MessageBox.Show(EditionInfo.ProductName + "启动失败：\n\n" + error.Message,
+                        "启动失败", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
 

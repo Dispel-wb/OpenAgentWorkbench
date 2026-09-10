@@ -9,8 +9,8 @@
 </head>
 <body>
   <div id="app" v-cloak>
-    <div class="app-shell">
-      <aside class="sidebar">
+    <div class="app-shell" :inert="hasBlockingOverlay()?true:null">
+      <aside class="sidebar" aria-label="会话导航">
         <div class="brand">
           <div class="brand-mark"><span v-if="useGlyphAgent" class="codex-agent-mark">◇</span><img v-else :src="agentImage" alt="Agent 图标"></div>
           <div><strong>{{agentTitle}}</strong><span>{{isOpenSource?'Open-source Edition':'本地自用版'}} · Desktop</span></div>
@@ -60,7 +60,7 @@
         </div>
 
         <template v-if="view==='chat'">
-          <section class="conversation" ref="conversation" @wheel.passive="markConversationScrollIntent" @touchstart.passive="markConversationScrollIntent" @scroll.passive="handleConversationScroll">
+          <section class="conversation" ref="conversation" role="region" aria-label="对话记录" tabindex="0" @wheel.passive="markConversationScrollIntent" @touchstart.passive="markConversationScrollIntent" @scroll.passive="handleConversationScroll">
             <div v-if="!messages.length" class="welcome">
               <div class="welcome-heading"><div class="welcome-mascot"><span v-if="useGlyphAgent" class="codex-agent-mark large">◇</span><img v-else :src="agentImage" alt="Agent 图标"></div><div class="welcome-copy"><span class="eyebrow">{{agentTitle.toUpperCase()}}</span><h2>今天想一起完成什么？</h2><p>分析代码、修改文件、运行工具，或切换到 Image capability。</p></div></div>
               <div class="starter-grid"><button @click="useStarter('分析当前工作区并给出简洁的项目概览')"><b>⌕</b><span>理解工作区<small>快速梳理结构与风险</small></span></button><button @click="useStarter('检查当前项目中最值得优先修复的问题')"><b>◇</b><span>检查问题<small>从关键路径开始</small></span></button><button @click="useStarter('帮我规划下一步开发工作，先不要修改文件')"><b>↗</b><span>制定计划<small>先规划，再执行</small></span></button></div>
@@ -71,7 +71,7 @@
               <div class="avatar" v-if="message.role==='assistant'"><span v-if="useGlyphAgent" class="codex-agent-mark">◇</span><img v-else :src="agentImage" alt=""></div>
               <div class="message-column">
                 <div class="message-head"><div class="speaker">{{message.role==='user'?`你${message.queueKind==='steer'?' · 优先转向':message.queueKind?' · 来自队列':''}`:message.role==='system'?'系统':agentLabel+' · '+(message.providerName||selectedProvider?.name||'API')}}</div><button class="message-delete" :disabled="busy||message.streaming" title="删除这条消息" @click="deleteMessage(message.id)">×</button></div>
-                <div class="message-body markdown-body" @click="handleMessageBodyClick" @contextmenu="openSelectionMenu(message,$event)"><span v-html="renderMessageMarkdown(message)"></span><span v-if="message.streaming" class="stream-caret"></span></div>
+                <div class="message-body markdown-body" tabindex="0" :aria-label="message.role==='user'?'你的消息':'Agent 回复'" @keydown="keyboardSelectionMenu(message,$event)" @click="handleMessageBodyClick" @contextmenu="openSelectionMenu(message,$event)"><span v-html="renderMessageMarkdown(message)"></span><span v-if="message.streaming" class="stream-caret" aria-hidden="true"></span></div>
                 <div v-if="messageTextOmitted(message)>0" class="long-message-control"><span>为保持长会话流畅，已省略 {{number(messageTextOmitted(message))}} 个字符的即时排版</span><button @click="expandMessageText(message)">再显示 {{number(messageRenderBudget)}}</button><button v-if="String(message.text||'').length<=250000" @click="expandMessageText(message,true)">显示完整内容</button></div>
                 <div v-if="message.attachments?.length" class="message-attachments">
                   <button v-for="path in message.attachments" :key="path" class="message-file-card" :title="`打开原始文件：${path}`" @click="openLocalFile(path)">
@@ -121,7 +121,7 @@
           <section class="composer-wrap">
             <div v-if="queuedPrompts.length" class="prompt-queue"><div class="queue-head"><span>队列 · {{queuedPrompts.length}}</span><small>当前任务完成后依次处理</small><button v-if="!busy" @click="runNextQueued">继续队列</button></div><div class="queue-items"><div v-for="(item,index) in queuedPrompts" :key="item.id" class="queue-item" :class="{steer:item.kind==='steer'}"><i>{{item.kind==='steer'?'转向':index+1}}</i><span>{{item.text}}</span><button :disabled="item.kind==='steer'||steering" title="直接注入当前 Claude Code 进程，立即改变工作方向" @click="prioritizeQueued(item.id)">更改方向</button><button title="从队列移除" @click="removeQueued(item.id)">×</button></div></div></div>
             <div class="composer" :class="{busy}">
-              <textarea v-model="prompt" :placeholder="busy?'当前任务运行中；输入下一条指令并按 Enter 加入队列…':'向 Claude Code 描述任务…'" @keydown="handleComposerKeydown"></textarea>
+              <textarea v-model="prompt" aria-label="任务输入，Enter 发送，Shift 加 Enter 换行" :placeholder="busy?'当前任务运行中；输入下一条指令并按 Enter 加入队列…':'向 Claude Code 描述任务…'" @keydown="handleComposerKeydown"></textarea>
               <div v-if="slashSuggestions.length" class="command-suggestions"><button v-for="name in slashSuggestions" :key="name" @click="useSlashCommand(name)"><b>/{{name}}</b><span>{{extensions.skills?.some(item=>item.name===name)?'Skill':'Claude Code 命令'}}</span></button></div>
               <div v-else-if="fileSuggestions.length" class="command-suggestions file-suggestions"><button v-for="file in fileSuggestions" :key="file.path" @click="useFileSuggestion(file)"><b>@{{file.name}}</b><span>{{file.path}}</span></button></div>
               <div v-if="attachments.length" class="attachment-strip">
@@ -137,7 +137,7 @@
               <div v-if="!busy&&(contextBudget||contextBudgetLoading)" class="context-budget-strip" :class="contextBudget?.decision||'loading'" :title="contextBudget?.warnings?.join(' ')||'正在估算本轮 Context'"><span>Context</span><div><i :style="{width:`${contextBudgetPercent()}%`}"></i></div><b v-if="contextBudgetLoading">估算中…</b><b v-else>{{number(contextBudget?.knownInputTokens)}} / {{number(contextBudget?.inputBudgetTokens)}} Token</b><em v-if="!contextBudgetLoading">{{contextBudgetDecisionLabel()}} · {{contextBudgetEvidenceLabel()}}</em></div>
               <div class="composer-footer"><div class="composer-hints"><button :disabled="choosingFiles||busy||!canAttachFiles||selectedModelUnavailable" :title="canAttachFiles?`添加文件 · ${attachmentCapabilityLabel}`:'请先选择可用文字模型'" @click="chooseFiles">{{choosingFiles?'…':'＋'}}</button><span>{{busy?'Enter 加入队列 · Shift + Enter 换行':attachments.length ? `待发送 ${attachments.length} 个文件` : 'Enter 发送 · Shift + Enter 换行'}}</span><em v-if="extensionTrustBlocked" class="tool-unsupported">项目扩展待确认 · <button @click="openInspector('extensions')">检查</button></em><em v-else-if="selectedModelUnavailable" class="tool-unsupported">{{selectedModelHealth?.state==='unavailable'?'当前模型已实测不可用':'当前模型正在冷却'}} · 请切换或重置健康记录</em><em v-else-if="selectedModelToolsUnsupported" class="tool-unsupported">当前模型不支持 Tool，请切换模型或只读模式</em><em v-else :class="{visual:visualAttachmentsSupported}">{{attachmentCapabilityLabel}}</em></div><button v-if="busy&&!paused" class="stop pause" @click="pauseChat">暂停</button><button v-if="busy&&paused" class="stop pause" @click="resumeChat">继续</button><button v-if="busy" class="stop" @click="stopChat">停止</button><button v-if="busy" class="send queue-send" :disabled="!prompt.trim()" @click="enqueuePrompt">加入队列 <span>＋</span></button><button v-else class="send" :disabled="extensionTrustBlocked||selectedModelUnavailable||selectedModelToolsUnsupported||(!prompt.trim()&&!attachments.length)" :title="extensionTrustBlocked?'请先检查项目级 Skill/Agent':selectedModelUnavailable?'当前模型不可用或正在冷却':selectedModelToolsUnsupported?'模型接口明确不支持 Tool calling':''" @click="sendPrompt">发送 <span>↗</span></button></div>
             </div>
-            <div class="statusline"><span :class="{live:busy}">● {{status}}</span><span>{{workerUsesOwnModel ? `Codex · ${settings.workerModel||'自身默认模型'}` : selectedProvider ? `${selectedProvider.name} · ${settings.model || '未选模型'}` : '请导入 API'}}</span></div>
+            <div class="statusline"><span role="status" aria-live="polite" aria-atomic="true" :class="{live:busy}">● {{status}}</span><span>{{workerUsesOwnModel ? `Codex · ${settings.workerModel||'自身默认模型'}` : selectedProvider ? `${selectedProvider.name} · ${settings.model || '未选模型'}` : '请导入 API'}}</span></div>
           </section>
         </template>
 
@@ -158,7 +158,7 @@
           <header><nav><button v-for="tab in [{id:'runs',name:'运行'},{id:'files',name:'文件'},{id:'git',name:'Git'},{id:'search',name:'搜索'},{id:'memory',name:'记忆'},{id:'extensions',name:'扩展'},{id:'usage',name:'统计'},{id:'checkpoints',name:'检查点'},{id:'terminal',name:'终端'},{id:'preview',name:'预览'},{id:'schedule',name:'调度'},{id:'health',name:'诊断'}]" :key="tab.id" :class="{active:inspector.tab===tab.id}" @click="inspector.tab=tab.id;refreshInspector()">{{tab.name}}<em v-if="tab.id==='runs'&&activeRunCount">{{activeRunCount}}</em><em v-if="tab.id==='memory'&&activeMemoryCount">{{activeMemoryCount}}</em></button></nav><button class="inspector-close" aria-label="关闭开发工作台" @click="inspector.open=false">×</button></header>
 
           <section v-if="inspector.tab==='runs'" class="inspector-pane runs-pane">
-            <div class="pane-toolbar"><b>后台 Agent</b><span>{{activeRunCount}} / 4 正在运行</span><button :disabled="runCenterLoading" @click="syncRuns(true)">刷新</button></div>
+            <div class="pane-toolbar"><b>后台 Agent</b><span>{{activeRunCount}} / 4 正在运行</span><button @click="openWorkflows()">DAG 编排</button><button :disabled="runCenterLoading" @click="syncRuns(true)">刷新</button></div>
             <div class="run-center-list"><article v-for="run in activeRuns" :key="run.id" :class="['run-card',run.state,{'awaiting-approval':Number(run.pendingApprovals||0)>0||!!approvalForRun(run)}]">
               <button class="run-card-main" @click="openRun(run)"><i></i><span><b>{{runSessionTitle(run)}}</b><small>{{runStateLabel(run)}} · {{run.model||'默认模型'}} · {{formatDuration(run.elapsedMs)}}</small><code>{{run.workspace}}</code></span><em>{{Number(run.pendingApprovals||0)>0||approvalForRun(run)?'处理授权':'打开'}}</em></button>
               <div class="run-card-actions"><button v-if="run.state!=='paused'" @click="controlRun(run,'pause')">暂停</button><button v-else @click="controlRun(run,'resume')">继续</button><button class="danger" @click="controlRun(run,'stop')">停止</button></div>
@@ -278,12 +278,14 @@
             <div class="settings-pane-title"><span class="eyebrow">WORKSPACES</span><h3>工作区</h3><p>对话、文件、Git 和终端都跟随当前工作区。这里只移除列表项，不会删除磁盘文件。</p></div>
             <section class="claude-runtime-card" :class="{ready:agentRuntime.available,failed:!agentRuntime.available}">
               <div class="runtime-status"><i></i><span><b>Agent Worker SDK</b><small v-if="agentRuntime.available">当前 {{agentRuntime.selected}} · {{agentRuntime.protocol}}</small><small v-else>未找到可用 Worker；可选择 Claude Code、Codex 或自定义协议 Worker</small></span></div>
-              <label>命令行核心<select v-model="settings.workerHarness" @change="workerHarnessChanged"><option value="auto">自动（优先 Claude，回退 Codex）</option><option value="claude">Claude Code CLI</option><option value="codex">Codex CLI</option><option value="dsh">DSHarness CLI（SDK 模式）</option><option v-for="item in agentRuntime.custom" :value="'custom:'+item.id">{{item.name}}</option></select></label>
+              <label>命令行核心<select v-model="settings.workerHarness" @change="workerHarnessChanged"><option value="auto">自动（优先 Claude，回退 Codex）</option><option value="claude">Claude Code CLI</option><option value="codex">Codex CLI</option><option value="dsh">DSHarness CLI（SDK 模式）</option><option value="pi">Pi Coding Agent（RPC 模式）</option><option v-for="item in agentRuntime.custom" :value="'custom:'+item.id">{{item.name}}</option></select></label>
+              <template v-if="settings.workerHarness==='pi'"><label>Pi CLI 入口<input v-model="settings.piEntry" @change="workerHarnessChanged" placeholder="@earendil-works/pi-coding-agent/dist/bundle/cli.js 的绝对路径"></label><label>Node.js（留空自动探测）<input v-model="settings.nodeExecutable" @change="workerHarnessChanged" placeholder="node.exe 的绝对路径"></label><small>Pi 0.85.1 · 使用上方 API 的文字模型。只读/规划禁用全部工具；完整权限启用原生工具，无工作区沙箱。工作区写入、逐次审批、工具名单、附件和实时插话暂不支持，不会自动提升权限。停用自动扩展发现与 Pi 遥测；支持原生会话续接。</small><code v-if="agentRuntime.pi?.path">{{agentRuntime.pi.path}}</code><small v-if="agentRuntime.pi?.probeError">{{agentRuntime.pi.probeError}}</small></template>
               <template v-if="settings.workerHarness==='dsh'"><label>DSHarness CLI 入口<input v-model="settings.dshEntry" @change="workerHarnessChanged" placeholder="官方 @deepseek-ai/dsh/lib/bin.js 的绝对路径"></label><label>Node.js（留空自动探测）<input v-model="settings.nodeExecutable" @change="workerHarnessChanged" placeholder="node.exe 的绝对路径"></label><small>直接启动 DSHarness SDK 核心，使用上方 API 的文字模型。停止会结束本任务的核心进程；交互审批与工具白名单暂不支持，额外授权请求会安全停止，不会自动批准。</small><code v-if="agentRuntime.dsh?.path">{{agentRuntime.dsh.path}}</code></template>
               <template v-if="settings.workerHarness==='codex'||agentRuntime.selected==='codex'"><label>Codex CLI 路径（可留空）<input v-model="settings.codexExecutable" @change="workerHarnessChanged" placeholder="留空自动探测 codex.exe"></label><label>Codex 模型（可留空）<input v-model="settings.workerModel" @change="saveSettings" placeholder="留空使用 Codex 自身默认模型"><small>Codex 使用自身认证与 Responses-compatible Provider；导入的 Chat Completions API 不会被冒充为 Codex Provider。</small></label></template>
               <small v-if="settings.workerHarness==='dsh'&&agentRuntime.dsh?.probeError" role="alert">{{agentRuntime.dsh.probeError}}</small>
               <small v-if="settings.workerHarness==='dsh'&&agentRuntime.dsh?.version">DSHarness {{agentRuntime.dsh.version}} · {{agentRuntime.dsh.versionVerified?'已验证适配版本（Alpha）':'当前版本尚未经过适配回归'}}。跨进程续接仍未验证；运行中优先指令会等本轮结束后执行。</small>
-              <code v-if="agentRuntime.selected==='codex'&&agentRuntime.codex?.path">{{agentRuntime.codex.path}}</code><code v-else-if="claudeRuntime.path">{{claudeRuntime.path}}</code>
+              <small v-if="settings.workerHarness==='pi'">当前采用普通文字模式，不应用思考强度设置。鉴权：OpenAI 使用 Bearer，Anthropic 使用 x-api-key；不执行自动鉴权重试。</small>
+              <code v-if="agentRuntime.selected==='codex'&&agentRuntime.codex?.path">{{agentRuntime.codex.path}}</code><code v-else-if="agentRuntime.selected==='claude'&&claudeRuntime.path">{{claudeRuntime.path}}</code>
               <p v-if="agentRuntime.selected==='codex'&&agentRuntime.codex?.probeError">{{agentRuntime.codex.probeError}}</p><p v-else-if="claudeRuntime.probeError">{{claudeRuntime.probeError}}</p>
               <div class="runtime-actions"><button v-if="settings.workerHarness==='claude'||(settings.workerHarness==='auto'&&agentRuntime.selected==='claude')" class="primary" :disabled="claudeRuntime.probing" @click="configureClaudeRuntime">{{claudeRuntime.probing?'正在检查…':claudeRuntime.available?'选择其他 claude.exe':'选择 claude.exe'}}</button><button class="secondary" :disabled="agentRuntime.probing" @click="loadAgentRuntimes(true)">{{agentRuntime.probing?'探测中…':'重新探测全部'}}</button><button v-if="claudeRuntime.configuredPath" class="secondary" :disabled="claudeRuntime.probing" @click="resetClaudeRuntime">恢复 Claude 自动探测</button></div>
             </section>
@@ -334,7 +336,36 @@
         <footer><code>{{scheduleEvidence.runId}}</code><button class="secondary" @click="copyText(scheduleEvidence.runId)">复制 Run ID</button><button class="primary" :disabled="scheduleEvidence.loading" @click="refreshScheduleEvidence">刷新证据</button></footer>
       </section>
     </div>
-    <div v-if="contextMenu.show" class="selection-menu" :style="{left:contextMenu.x+'px',top:contextMenu.y+'px'}" @mousedown.stop><button @click="copyContextSelection">复制</button><button @click="quoteContextSelection">引用</button><button @click="exportContextSelection">导出 TXT</button></div>
+    <div v-if="workflowDialog.open" class="modal-backdrop" @mousedown.self="closeWorkflows">
+      <section ref="workflowDialog" class="modal workflow-dialog" role="dialog" aria-modal="true" aria-labelledby="workflow-title" tabindex="-1" @keydown.tab="trapDialogFocus($event,'workflowDialog')">
+        <header><div><h2 id="workflow-title">多 Agent 工作流</h2><p>每个节点可选择不同父 Run；依赖成功后才派发。权限与核心继承各自的父任务，不自动扩大。</p></div><button aria-label="关闭工作流" @click="closeWorkflows">×</button></header>
+        <div class="modal-scroll">
+          <label>名称<input v-model="workflowDialog.name" maxlength="80"></label><label>同时运行节点数<input type="number" min="1" max="4" v-model.number="workflowDialog.maxParallel"></label>
+          <fieldset v-for="(node,index) in workflowDialog.nodes" :key="index"><legend>节点 {{index+1}}</legend>
+            <div class="workflow-fields"><label>节点 ID<input v-model="node.id" maxlength="64"></label><label>父 Run ID<input v-model="node.parentRunId" placeholder="从运行证据复制 Run ID"></label><label>依赖节点<input v-model="node.dependencyText" placeholder="step1, step2；空白表示立即运行"></label></div>
+            <label>任务要求<textarea v-model="node.prompt" maxlength="120000"></textarea></label>
+            <label><input type="checkbox" v-model="node.includeDependencyResults"> 将依赖节点的结果作为参考内容传入（可能跨工作区；不改变权限）</label>
+          </fieldset>
+          <p v-if="workflowDialog.error" role="alert">{{workflowDialog.error}}</p>
+          <div class="workflow-actions"><button :disabled="workflowDialog.nodes.length>=32" @click="addWorkflowNode">添加节点</button><button :disabled="workflowDialog.busy" @click="submitWorkflow">{{workflowDialog.busy?'保存中…':'创建后台工作流'}}</button></div>
+          <h3>已保存工作流</h3>
+          <article v-for="item in workflowDialog.items" :key="item.id" class="workflow-record"><header><b>{{item.name}}</b><span>{{item.paused&&item.state==='running'?'已暂停派发':workflowState(item.state)}}</span></header>
+            <ol><li v-for="node in item.nodes" :key="node.id"><b>{{node.id}}</b> · {{workflowState(node.state)}}<small v-if="node.dependencies.length"> ← {{node.dependencies.join(', ')}}</small><p v-if="node.error">{{node.error}}</p><button v-if="node.runId" @click="copyText(node.runId)">复制 Run ID</button></li></ol>
+            <div v-if="item.state==='running'"><button @click="controlWorkflow(item,item.paused?'resume':'pause')">{{item.paused?'继续派发':'暂停后续节点'}}</button><button @click="controlWorkflow(item,'cancel')">取消工作流</button></div>
+          </article>
+        </div>
+      </section>
+    </div>
+    <div v-if="documentPreview.open" class="modal-backdrop" @mousedown.self="closeDocumentPreview">
+      <section ref="documentDialog" class="modal document-dialog" role="dialog" aria-modal="true" aria-labelledby="document-title" tabindex="-1" @keydown.tab="trapDialogFocus($event,'documentDialog')">
+        <header><div><h2 id="document-title">{{documentPreview.name}}</h2><p>只读文档预览</p></div><div><button @click="openSystemFile(documentPreview.path)">用系统应用打开</button><button aria-label="关闭文档预览" @click="closeDocumentPreview">×</button></div></header>
+        <p class="document-notice">{{documentPreview.notice}}</p>
+        <p v-if="documentPreview.loading" role="status">正在读取文档…</p><p v-if="documentPreview.error" role="alert">{{documentPreview.error}}</p>
+        <iframe v-if="documentPreview.kind==='office'&&!documentPreview.loading" title="Office 文档内容" sandbox="" referrerpolicy="no-referrer" :srcdoc="documentPreview.html"></iframe>
+        <iframe v-if="documentPreview.url" title="PDF 阅读器" referrerpolicy="no-referrer" :src="documentPreview.url"></iframe>
+      </section>
+    </div>
+    <div v-if="contextMenu.show" ref="selectionMenu" class="selection-menu" role="menu" aria-label="所选内容操作" :style="{left:contextMenu.x+'px',top:contextMenu.y+'px'}" @keydown="selectionMenuKey" @mousedown.stop><button role="menuitem" @click="copyContextSelection">复制</button><button role="menuitem" @click="quoteContextSelection">引用</button><button role="menuitem" @click="exportContextSelection">导出 TXT</button></div>
     <div v-if="palette.open" class="palette-backdrop" @mousedown.self="closePalette"><section ref="paletteDialog" class="command-palette" role="dialog" aria-modal="true" aria-labelledby="palette-dialog-title" tabindex="-1" @keydown.tab="trapDialogFocus($event,'paletteDialog')"><header><span aria-hidden="true">⌕</span><input id="palette-dialog-title" ref="paletteInput" aria-label="命令面板" v-model="palette.query" @input="paletteQueryChanged" @keydown.down.prevent="movePalette(1)" @keydown.up.prevent="movePalette(-1)" @keydown.enter.prevent="executePalette" placeholder="搜索会话或输入操作…"></header><div class="palette-results"><button v-for="(item,index) in paletteItems" :key="item.id" :class="{active:index===palette.index}" @mouseenter="palette.index=index" @click="runPaletteItem(item)"><i>{{item.icon}}</i><span><b>{{item.title}}</b><small>{{item.hint}}</small></span><kbd>{{item.shortcut||''}}</kbd></button><div v-if="!paletteItems.length" class="pane-empty small">没有匹配项</div></div><footer>↑↓ 浏览 · Enter 执行 · Esc 关闭</footer></section></div>
     <div v-if="approvals.length" class="approval-stack" aria-live="assertive">
       <section v-for="item in approvals" :key="item.id" class="approval-card" role="alertdialog" :aria-labelledby="'approval-title-'+item.id" :aria-describedby="'approval-reason-'+item.id">
@@ -351,6 +382,8 @@
   <script src="/static/vendor/xterm-addon-search.js?v=6.4.21"></script>
   <script src="/static/modules/ui-store.js?v=6.4.22"></script>
   <script src="/static/modules/provider-catalog.js?v=6.4.22"></script>
+  <script src="/static/modules/document-ui.js?v=6.4.23"></script>
+  <script src="/static/modules/workflow-ui.js?v=6.4.23"></script>
   <script src="/static/app.js?v=6.4.21"></script>
 </body>
 </html>

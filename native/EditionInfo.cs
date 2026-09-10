@@ -19,7 +19,7 @@ namespace ClaudeCodeWorkbench
         public const string ProductId = "ClaudeCodeWorkbench.Native";
         public const string ExecutableName = "ClaudeCodeWorkbench.exe";
         public const string StorageId = "ClaudeCodeWorkbench";
-        public const string ContractVersion = "6.4.22-dev.native.local";
+        public const string ContractVersion = "6.4.24-dev.native.local";
         public const string DefaultWorkspace = @"D:\work\Claude";
         public const string DefaultInstallDirectory = @"D:\softwares\ClaudeCode";
 #endif

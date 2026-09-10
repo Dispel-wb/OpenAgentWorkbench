@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased — 1.0.0 readiness work
+
+- Added the optional, locked Pi 0.85.1 native RPC adapter with explicit permission limits, persisted sessions, process-tree cancellation and genuine loopback-model tests.
+- Fixed fresh-start workspace precedence so the UI does not replace the Host's C-drive or Unicode workspace with a hard-coded D-drive default.
+- Added a shared raw-frame retention budget for DSHarness, covering both the mailbox and pre-acknowledgement notifications.
+- Extended CI to restore and test the actual Pi runtime and reject workspace/bootstrap and aggregate-buffer regressions.
+- Signing is an explicitly accepted exemption for the requested 1.0.0; all other readiness claims still require evidence. No stable version is declared by this entry.
+
 ## 0.7.0-preview.1 — unreleased candidate
 
 - 增加真正的 Codex CLI exec/resume 和 DSHarness CLI SDK 核心，独立于 Claude Code 安装。

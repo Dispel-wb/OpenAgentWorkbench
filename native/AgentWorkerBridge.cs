@@ -20,6 +20,7 @@ namespace ClaudeCodeWorkbench
             {
                 var config = JsonUtil.Read(configPath, null) as JObject;
                 if ((string)config?["harness"] == "dsh") return DshWorkerBridge.Run(config);
+                if ((string)config?["harness"] == "pi") return PiWorkerBridge.Run(config);
                 if (config == null || (string)config["harness"] != "codex") throw new InvalidDataException("Agent Worker bridge configuration is invalid.");
                 var statePath = (string)config["statePath"] ?? Path.ChangeExtension(configPath, ".state.json");
                 var state = JsonUtil.Read(statePath, new JObject()) as JObject ?? new JObject();
@@ -88,14 +89,22 @@ namespace ClaudeCodeWorkbench
                 process.StandardInput.BaseStream.Write(promptBytes, 0, promptBytes.Length);
                 process.StandardInput.BaseStream.Flush(); process.StandardInput.Close();
                 string line;
-                while ((line = process.StandardOutput.ReadLine()) != null)
+                while ((line = SdkFrameReader.ReadLine(process.StandardOutput)) != null)
                 {
                     JObject value;
-                    try { value = JObject.Parse(line); } catch { text.AppendLine(line); continue; }
+                    if (string.IsNullOrWhiteSpace(line)) continue;
+                    try { value = JObject.Parse(line); }
+                    catch (JsonException parseError) { throw new InvalidDataException("Codex 核心输出了无效 JSON，已停止当前任务。", parseError); }
                     if ((string)value["type"] == "thread.started" && !string.IsNullOrWhiteSpace((string)value["thread_id"]))
                     { threadId = (string)value["thread_id"]; state["threadId"] = threadId; if (!string.IsNullOrWhiteSpace((string)config["statePath"])) JsonUtil.WriteAtomic((string)config["statePath"], state); }
                     var item = value["item"] as JObject;
-                    if ((string)value["type"] == "item.completed" && (string)item?["type"] == "agent_message") text.Append((string)item["text"] ?? "");
+                    if ((string)value["type"] == "item.completed" && (string)item?["type"] == "agent_message")
+                    {
+                        var message = (string)item["text"] ?? "";
+                        if ((long)text.Length + message.Length > 8 * 1024 * 1024)
+                            throw new InvalidDataException("Codex 本轮回答超过安全长度上限，已停止当前任务。");
+                        text.Append(message);
+                    }
                     if ((string)value["type"] == "turn.completed" && value["usage"] is JObject)
                         usage = CodexTurnUsage((JObject)value["usage"], state);
                     if ((string)value["type"] == "turn.completed") terminalSeen = true;
@@ -104,11 +113,22 @@ namespace ClaudeCodeWorkbench
                     if (errors.Length > 16384) errors.Remove(0, errors.Length - 16384);
                     EmitCodexTool(value, item);
                     Write(new JObject { ["type"] = "system", ["subtype"] = "worker_event", ["worker"] = "codex", ["event"] = value });
+                    // A completed turn is the protocol boundary. Some CLI versions keep
+                    // pipes/processes alive during shutdown; do not wait for EOF forever.
+                    if (terminalSeen) break;
                 }
-                process.WaitForExit();
-                try { errors.Append(errorTask.Result); } catch { }
+                var cleanupAfterTerminal = false;
+                if (!process.WaitForExit(5000))
+                {
+                    cleanupAfterTerminal = terminalSeen;
+                    job.Dispose();
+                    try { if (!process.HasExited) process.Kill(); } catch { }
+                    process.WaitForExit(2000);
+                    if (cleanupAfterTerminal) Write(new JObject { ["type"] = "system", ["subtype"] = "worker_cleanup", ["worker"] = "codex", ["message"] = "核心已返回本轮终态；已清理未正常退出的独立子进程。" });
+                }
+                try { if (errorTask.Wait(1000)) errors.Append(errorTask.Result); } catch { }
                 var error = errors.ToString().Trim();
-                var exitCode = process.ExitCode != 0 ? process.ExitCode : terminalFailed || !terminalSeen ? 1 : 0;
+                var exitCode = terminalFailed || !terminalSeen ? 1 : cleanupAfterTerminal ? 0 : process.HasExited ? process.ExitCode : 1;
                 if (exitCode != 0 && error.Length == 0) error = !terminalSeen ? "Codex 核心已退出，但没有返回本轮完成事件。" : "Codex Worker exited with code " + exitCode + ".";
                 return new BridgeOutcome { ExitCode = exitCode, Text = text.ToString(), Error = error, Usage = usage, State = state };
             }

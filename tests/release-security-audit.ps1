@@ -51,6 +51,7 @@ if ($Executable) {
         $authenticode = Get-AuthenticodeSignature -LiteralPath $executablePath
         $signature = [ordered]@{ status = [string]$authenticode.Status; signer = if ($authenticode.SignerCertificate) { $authenticode.SignerCertificate.Subject } else { '' } }
         if ($authenticode.Status -eq 'NotSigned') { $warnings.Add('Executable is unsigned; release must publish SHA-256 and reproducibility evidence.') }
+        elseif ($authenticode.Status -ne 'Valid') { $failures.Add("Executable signature verification failed: $($authenticode.Status)") }
     }
 }
 

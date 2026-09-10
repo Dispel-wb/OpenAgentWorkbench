@@ -20,4 +20,6 @@ The optional DSHarness runtime installer retrieves `@deepseek-ai/dsh` and its lo
 
 Claude and Anthropic are trademarks of Anthropic PBC. OpenAI and Codex are trademarks of OpenAI. Microsoft, Windows, Office and WebView2 are trademarks of Microsoft. All other marks belong to their respective owners. Use of a name describes interoperability only and does not imply affiliation or endorsement.
 
+The optional Pi runtime retrieves `@earendil-works/pi-coding-agent` 0.85.1 (MIT) and the dependencies recorded in `runtimes/pi/package-lock.json`. It is not embedded in the EXE or public source archive. Pi candidate bundles may include this separate runtime directory, retaining the original package license files. Node.js remains separately installed.
+
 No Claude, Codex or provider logo, mascot, screenshot, API credential, user workspace, transcript or private skin asset is included in the open-source release.

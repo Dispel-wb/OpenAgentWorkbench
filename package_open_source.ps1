@@ -42,6 +42,7 @@ foreach ($file in @('.gitignore','LICENSE','README.md','SECURITY.md','THIRD_PART
     Copy-PublicFile $file
 }
 Copy-PublicFile '.gitattributes'
+foreach ($file in @('install_pi_runtime.ps1','runtimes\pi\package.json','runtimes\pi\package-lock.json','docs\PI_AGENT.md')) { Copy-PublicFile $file }
 Copy-PublicFile 'build\dependencies.lock.json'
 Get-ChildItem -LiteralPath (Join-Path $resolvedSource 'third_party') -File | ForEach-Object {
     Copy-PublicFile (Join-Path 'third_party' $_.Name)
@@ -63,7 +64,7 @@ Get-ChildItem -LiteralPath (Join-Path $resolvedSource 'tests') -File | Where-Obj
     $_.Extension -in @('.ps1','.js','.cs','.md') -and $_.Name -notmatch '(?i)(result|debug|runner-error|stdout|stderr)'
 } | ForEach-Object { Copy-PublicFile (Join-Path 'tests' $_.Name) }
 
-foreach ($document in @('THREAT_MODEL.md','AGENT_WORKER_SDK.md','ARCHITECTURE.md','DEVELOPMENT.md','DATA_MODEL.md','BUILD_REPRODUCIBILITY.md','WINDOWS_TEST_MATRIX.md','RELEASE_PROCESS.md','VALIDATION_STATUS.md')) {
+foreach ($document in @('THREAT_MODEL.md','AGENT_WORKER_SDK.md','ARCHITECTURE.md','DEVELOPMENT.md','DATA_MODEL.md','BUILD_REPRODUCIBILITY.md','WINDOWS_TEST_MATRIX.md','RELEASE_PROCESS.md','VALIDATION_STATUS.md','VALIDATION_6.4.24.md','VALIDATION_PREVIEW_CANCELLATION.md','MATURITY_GAPS.md','V1_RELEASE_READINESS.md')) {
     Copy-PublicFile (Join-Path 'docs' $document)
 }
 

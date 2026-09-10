@@ -88,28 +88,28 @@ namespace ClaudeCodeWorkbench
             }
             if (method == "GET" && path == "/api/workbench/transcripts")
             {
-                var query = context.Request.QueryString["query"] ?? "";
-                var workspace = context.Request.QueryString["workspace"] ?? "";
+                var query = HttpQuery.Get(context.Request, "query") ?? "";
+                var workspace = HttpQuery.Get(context.Request, "workspace") ?? "";
                 await WriteJson(context.Response, ListTranscripts(workspace, query)); return true;
             }
             if (method == "GET" && path.StartsWith("/api/workbench/transcripts/", StringComparison.Ordinal))
             {
                 var id = SafeId(path.Substring("/api/workbench/transcripts/".Length));
-                var file = FindTranscript(id, context.Request.QueryString["workspace"] ?? "");
+                var file = FindTranscript(id, HttpQuery.Get(context.Request, "workspace") ?? "");
                 if (file == null) { await Error(context.Response, "找不到 Claude transcript", 404); return true; }
                 await WriteJson(context.Response, ParseTranscript(file, true)); return true;
             }
             if (method == "GET" && path == "/api/workbench/tree")
             {
-                await WriteJson(context.Response, ListTree(context.Request.QueryString["workspace"], context.Request.QueryString["path"])); return true;
+                await WriteJson(context.Response, ListTree(HttpQuery.Get(context.Request, "workspace"), HttpQuery.Get(context.Request, "path"))); return true;
             }
             if (method == "GET" && path == "/api/workbench/files/search")
             {
-                await WriteJson(context.Response, SearchFiles(context.Request.QueryString["workspace"], context.Request.QueryString["query"])); return true;
+                await WriteJson(context.Response, SearchFiles(HttpQuery.Get(context.Request, "workspace"), HttpQuery.Get(context.Request, "query"))); return true;
             }
             if (path == "/api/workbench/file" && method == "GET")
             {
-                await WriteJson(context.Response, ReadFile(context.Request.QueryString["workspace"], context.Request.QueryString["path"])); return true;
+                await WriteJson(context.Response, ReadFile(HttpQuery.Get(context.Request, "workspace"), HttpQuery.Get(context.Request, "path"))); return true;
             }
             if (path == "/api/workbench/file" && method == "POST")
             {
@@ -118,11 +118,11 @@ namespace ClaudeCodeWorkbench
             }
             if (method == "GET" && path == "/api/workbench/git/status")
             {
-                await WriteJson(context.Response, GitStatus(context.Request.QueryString["workspace"])); return true;
+                await WriteJson(context.Response, GitStatus(HttpQuery.Get(context.Request, "workspace"))); return true;
             }
             if (method == "GET" && path == "/api/workbench/git/diff")
             {
-                await WriteJson(context.Response, GitDiff(context.Request.QueryString["workspace"], context.Request.QueryString["staged"] == "1")); return true;
+                await WriteJson(context.Response, GitDiff(HttpQuery.Get(context.Request, "workspace"), HttpQuery.Get(context.Request, "staged") == "1")); return true;
             }
             if (method == "POST" && path == "/api/workbench/git/action")
             {
@@ -131,7 +131,7 @@ namespace ClaudeCodeWorkbench
             }
             if (method == "GET" && path == "/api/workbench/extensions")
             {
-                await WriteJson(context.Response, Extensions(context.Request.QueryString["workspace"])); return true;
+                await WriteJson(context.Response, Extensions(HttpQuery.Get(context.Request, "workspace"))); return true;
             }
             if (method == "GET" && path == "/api/workbench/skins")
             {
@@ -173,11 +173,11 @@ namespace ClaudeCodeWorkbench
             }
             if (method == "GET" && path == "/api/workbench/usage")
             {
-                await WriteJson(context.Response, Usage(context.Request.QueryString["workspace"])); return true;
+                await WriteJson(context.Response, Usage(HttpQuery.Get(context.Request, "workspace"))); return true;
             }
             if (method == "GET" && path == "/api/workbench/memories")
             {
-                await WriteJson(context.Response, WorkspaceMemories(context.Request.QueryString["workspace"])); return true;
+                await WriteJson(context.Response, WorkspaceMemories(HttpQuery.Get(context.Request, "workspace"))); return true;
             }
             if (method == "POST" && path == "/api/workbench/memories")
             {
@@ -202,7 +202,7 @@ namespace ClaudeCodeWorkbench
             }
             if (method == "GET" && path == "/api/workbench/health")
             {
-                await WriteJson(context.Response, Health(context.Request.QueryString["workspace"])); return true;
+                await WriteJson(context.Response, Health(HttpQuery.Get(context.Request, "workspace"))); return true;
             }
             if (method == "GET" && path == "/api/workbench/metrics")
             {
@@ -211,11 +211,11 @@ namespace ClaudeCodeWorkbench
             }
             if (method == "GET" && path == "/api/workbench/runtime/claude")
             {
-                await WriteJson(context.Response, NativeWorkerHandle.ClaudeRuntimeDiagnostics(context.Request.QueryString["probe"] == "1")); return true;
+                await WriteJson(context.Response, NativeWorkerHandle.ClaudeRuntimeDiagnostics(HttpQuery.Get(context.Request, "probe") == "1")); return true;
             }
             if (method == "GET" && path == "/api/workbench/runtime/agents")
             {
-                await WriteJson(context.Response, AgentWorkerSdk.Diagnostics(context.Request.QueryString["probe"] == "1")); return true;
+                await WriteJson(context.Response, AgentWorkerSdk.Diagnostics(HttpQuery.Get(context.Request, "probe") == "1")); return true;
             }
             if (method == "POST" && path == "/api/workbench/runtime/claude/configure")
             {
@@ -320,7 +320,7 @@ namespace ClaudeCodeWorkbench
             }
             if (method == "GET" && path == "/api/workbench/terminal/poll")
             {
-                await WriteJson(context.Response, PollTerminal(context.Request.QueryString["id"])); return true;
+                await WriteJson(context.Response, PollTerminal(HttpQuery.Get(context.Request, "id"))); return true;
             }
             if (method == "POST" && path == "/api/workbench/terminal/stop")
             {
@@ -356,11 +356,11 @@ namespace ClaudeCodeWorkbench
             }
             if (method == "GET" && path == "/api/workbench/checkpoints")
             {
-                await WriteJson(context.Response, ListCheckpoints(context.Request.QueryString["sessionId"])); return true;
+                await WriteJson(context.Response, ListCheckpoints(HttpQuery.Get(context.Request, "sessionId"))); return true;
             }
             if (method == "GET" && path == "/api/workbench/task/forks")
             {
-                await WriteJson(context.Response, _eventStore.ListForks(context.Request.QueryString["sessionId"])); return true;
+                await WriteJson(context.Response, _eventStore.ListForks(HttpQuery.Get(context.Request, "sessionId"))); return true;
             }
             if (method == "POST" && path == "/api/workbench/checkpoints")
             {
@@ -374,11 +374,11 @@ namespace ClaudeCodeWorkbench
             }
             if (method == "GET" && path == "/api/workbench/task/isolation")
             {
-                await WriteJson(context.Response, TaskWorkspaceManager.Describe(context.Request.QueryString["jobId"])); return true;
+                await WriteJson(context.Response, TaskWorkspaceManager.Describe(HttpQuery.Get(context.Request, "jobId"))); return true;
             }
             if (method == "GET" && path == "/api/workbench/task/diff")
             {
-                await WriteJson(context.Response, TaskWorkspaceManager.Diff(context.Request.QueryString["jobId"], context.Request.QueryString["path"])); return true;
+                await WriteJson(context.Response, TaskWorkspaceManager.Diff(HttpQuery.Get(context.Request, "jobId"), HttpQuery.Get(context.Request, "path"))); return true;
             }
             if (method == "POST" && path == "/api/workbench/task/apply")
             {
@@ -1001,7 +1001,7 @@ namespace ClaudeCodeWorkbench
 
         private static JObject PackageMetadata(JObject manifest, JObject trust)
         {
-            return new JObject { ["id"] = manifest["id"], ["type"] = manifest["type"], ["name"] = manifest["name"] ?? manifest["id"], ["version"] = manifest["version"] ?? "0.0.0", ["minAppVersion"] = manifest["minAppVersion"] ?? "", ["maxAppVersion"] = manifest["maxAppVersion"] ?? "", ["signatureStatus"] = trust["signatureStatus"], ["publisherThumbprint"] = trust["publisherThumbprint"], ["installedAt"] = ProviderStore.NowIso() };
+            return new JObject { ["id"] = manifest["id"], ["type"] = manifest["type"], ["name"] = manifest["name"] ?? manifest["id"], ["version"] = manifest["version"] ?? "0.0.0", ["minAppVersion"] = manifest["minAppVersion"] ?? "", ["maxAppVersion"] = manifest["maxAppVersion"] ?? "", ["signatureStatus"] = trust["signatureStatus"], ["publisherThumbprint"] = trust["publisherThumbprint"], ["permissions"] = trust["permissions"]?.DeepClone() ?? new JArray(), ["permissionPolicy"] = trust["permissionPolicy"], ["signatureVersion"] = trust["signatureVersion"] ?? 0, ["installedAt"] = ProviderStore.NowIso() };
         }
 
         private static void CopyDirectory(string sourceRoot, string targetRoot, string manifestPath)
@@ -1109,6 +1109,8 @@ namespace ClaudeCodeWorkbench
                 ["minAppVersion"] = (string)source["minAppVersion"] ?? "",
                 ["maxAppVersion"] = (string)source["maxAppVersion"] ?? "",
                 ["signatureStatus"] = packageTrust["signatureStatus"],
+                ["permissions"] = packageTrust["permissions"]?.DeepClone() ?? new JArray(),
+                ["permissionPolicy"] = packageTrust["permissionPolicy"],
                 ["publisherThumbprint"] = packageTrust["publisherThumbprint"]
             };
             JsonUtil.WriteAtomic(Path.Combine(installRoot, "manifest.json"), normalized);
@@ -1130,56 +1132,14 @@ namespace ClaudeCodeWorkbench
 
         private static JObject ValidateSkinPackage(JObject manifest, string sourceRoot)
         {
-            var current = ParseAppVersion(Program.AppContractVersion);
-            var min = ParseAppVersion((string)manifest["minAppVersion"]);
-            var max = ParseAppVersion((string)manifest["maxAppVersion"]);
-            if (min != null && current.CompareTo(min) < 0) throw new InvalidOperationException("扩展包要求工作台版本不低于 " + min);
-            if (max != null && current.CompareTo(max) > 0) throw new InvalidOperationException("扩展包只兼容工作台 " + max + " 或更早版本");
-            var signature = manifest["signature"] as JObject;
-            if (signature == null)
-            {
-                if (!((bool?)manifest["development"] ?? false))
-                    throw new InvalidOperationException("生产扩展包必须包含受信任证书签名；本地开发包请在 manifest.json 明确设置 development: true");
-                return new JObject { ["signatureStatus"] = "unsigned-development", ["publisherThumbprint"] = "" };
-            }
-            var algorithm = ((string)signature["algorithm"] ?? "RSA-SHA256").Trim();
-            if (!string.Equals(algorithm, "RSA-SHA256", StringComparison.OrdinalIgnoreCase)) throw new InvalidOperationException("皮肤签名算法仅支持 RSA-SHA256");
-            var thumbprint = NormalizeThumbprint((string)signature["thumbprint"]);
-            var value = ((string)signature["value"] ?? "").Trim();
-            var hashes = manifest["contentSha256"] as JObject;
-            if (thumbprint.Length == 0 || value.Length == 0 || hashes == null || hashes.Count == 0) throw new InvalidOperationException("皮肤签名缺少 thumbprint、value 或 contentSha256");
-            var declared = new HashSet<string>(hashes.Properties().Select(property => property.Name.Replace('\\', '/')), StringComparer.OrdinalIgnoreCase);
-            var actualFiles = Directory.EnumerateFiles(sourceRoot, "*", SearchOption.AllDirectories)
-                .Where(file => !string.Equals(Path.GetFileName(file), "manifest.json", StringComparison.OrdinalIgnoreCase))
-                .Select(file => file.Substring(sourceRoot.TrimEnd(Path.DirectorySeparatorChar).Length).TrimStart(Path.DirectorySeparatorChar).Replace('\\', '/')).ToArray();
-            var undeclared = actualFiles.FirstOrDefault(file => !declared.Contains(file));
-            if (undeclared != null) throw new InvalidOperationException("扩展包包含未纳入签名清单的文件：" + undeclared);
-            foreach (var property in hashes.Properties())
-            {
-                var relative = property.Name.Replace('/', Path.DirectorySeparatorChar);
-                var file = ResolveInside(sourceRoot, relative);
-                if (!File.Exists(file)) throw new InvalidOperationException("签名清单中的文件不存在：" + property.Name);
-                var actual = Sha256File(file);
-                if (!string.Equals(actual, ((string)property.Value ?? "").Replace("-", "").Trim(), StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("皮肤文件校验失败：" + property.Name);
-            }
-            var signedText = string.Join("\n", hashes.Properties().OrderBy(property => property.Name, StringComparer.Ordinal)
-                .Select(property => property.Name.Replace('\\', '/') + "=" + ((string)property.Value ?? "").Replace("-", "").ToUpperInvariant()));
-            var certificate = FindTrustedCertificate(thumbprint);
-            if (certificate == null) throw new InvalidOperationException("找不到受信任的皮肤发布者证书：" + thumbprint);
-            using (certificate)
-            using (var rsa = certificate.GetRSAPublicKey())
-            {
-                if (rsa == null || !rsa.VerifyData(Encoding.UTF8.GetBytes(signedText), Convert.FromBase64String(value), HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1))
-                    throw new InvalidOperationException("皮肤包签名无效或内容已被修改");
-            }
-            return new JObject { ["signatureStatus"] = "trusted", ["publisherThumbprint"] = thumbprint };
+            return ExtensionPackagePolicy.Validate(manifest, sourceRoot, Program.AppContractVersion, FindTrustedCertificate);
         }
 
         private static Version ParseAppVersion(string value)
         {
             if (string.IsNullOrWhiteSpace(value)) return null;
-            var clean = value.Trim().Split('-')[0]; Version parsed; return Version.TryParse(clean, out parsed) ? parsed : null;
+            Version parsed;
+            return Version.TryParse(value.Trim().Split('-')[0], out parsed) ? parsed : null;
         }
 
         private static string NormalizeThumbprint(string value) { return new string((value ?? "").Where(Uri.IsHexDigit).ToArray()).ToUpperInvariant(); }

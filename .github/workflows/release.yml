@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  checks: read
 
 jobs:
   release:
@@ -38,6 +39,11 @@ jobs:
           $declared = [regex]::Match($edition, 'ContractVersion\s*=\s*"([^"]+)"').Groups[1].Value
           if ($version -ne $declared) { throw "Release label $version does not match source version $declared" }
           "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Verify actual CI for this exact commit
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .\tests\require-release-ci.ps1 -Repository $env:GITHUB_REPOSITORY -Commit $env:GITHUB_SHA
       - name: Build and gate
         shell: pwsh
         run: |
@@ -63,6 +69,9 @@ jobs:
           Copy-Item -LiteralPath .\install_dsh_runtime.ps1 -Destination $stage
           New-Item -ItemType Directory -Path "$stage\runtimes\dsh" -Force | Out-Null
           Copy-Item -LiteralPath .\runtimes\dsh\package.json,.\runtimes\dsh\package-lock.json -Destination "$stage\runtimes\dsh"
+          Copy-Item -LiteralPath .\install_pi_runtime.ps1 -Destination $stage
+          New-Item -ItemType Directory -Path "$stage\runtimes\pi" -Force | Out-Null
+          Copy-Item -LiteralPath .\runtimes\pi\package.json,.\runtimes\pi\package-lock.json -Destination "$stage\runtimes\pi"
           Compress-Archive -LiteralPath $stage -DestinationPath "$stage.zip" -CompressionLevel Optimal
           Get-FileHash "$stage.zip",.\dist\release\OpenAgentWorkbench.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } | Set-Content .\dist\release\SHA256SUMS.txt -Encoding utf8
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

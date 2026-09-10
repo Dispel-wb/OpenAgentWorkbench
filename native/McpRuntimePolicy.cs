@@ -70,6 +70,10 @@ namespace ClaudeCodeWorkbench
                     var url = ((string)server["url"] ?? "").Trim();
                     if (command.Length == 0 && url.Length == 0) throw new InvalidOperationException("MCP 服务器缺少 command 或 url");
                     if (command.Length > 2048 || url.Length > 4096) throw new InvalidOperationException("MCP 服务器入口长度超过限制");
+                    if (server["env"] != null && (!(server["env"] is JObject) || ((JObject)server["env"]).Properties().Any(p => p.Value.Type != JTokenType.String)))
+                        throw new InvalidOperationException("MCP 服务器 " + name + " 的 env 必须是字符串字典；数字、布尔值也必须用引号包裹");
+                    if (server["args"] != null && (!(server["args"] is JArray) || ((JArray)server["args"]).Any(v => v.Type != JTokenType.String)))
+                        throw new InvalidOperationException("MCP 服务器 " + name + " 的 args 必须是字符串数组");
                     var transport = command.Length > 0 ? "stdio" : InferHttpTransport(url);
                     var capabilities = new JArray(command.Length > 0 ? "local-process" : "network");
                     if (server["args"] is JArray args && args.Count > 0) capabilities.Add("arguments");

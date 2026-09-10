@@ -67,6 +67,11 @@ try {
     Save-Provider $connection 'healthy-provider' 'Healthy Provider' 'healthy-vision-model' $true
     Save-Provider $connection 'cooling-provider' 'Cooling Provider' 'cooling-model' $false
     Save-Provider $connection 'auth-provider' 'Auth Provider' 'auth-model' $false
+    Save-Provider $connection 'local-error-provider' 'Local Runtime Error' 'local-model' $false
+    $localFailure=Run-Task $connection $root 'local-error-provider' 'local-model' 'local-permission-runtime-failure'
+    if($localFailure.Poll.status.failureClassification.kind-ne'local_runtime'-or$localFailure.Poll.status.fallbackDecision){throw 'Local runtime error was misclassified as Provider failure'}
+    $localHealth=Api $connection '/api/providers/health?providerId=local-error-provider'
+    foreach($item in $localHealth){if($item.failureCount-gt 0){throw 'Local error polluted Provider health ledger'}}
 
     foreach ($unknownProbe in @(
         @{ path='/api/providers/discover'; body=@{providerId='missing-provider';baseUrl='http://127.0.0.1:9';authStyle='auto'} },

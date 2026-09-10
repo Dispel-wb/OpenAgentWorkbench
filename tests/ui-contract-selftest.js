@@ -31,14 +31,15 @@ global.document = {
   querySelector() { return null; }
 };
 global.crypto = { randomUUID() { return '00000000-0000-4000-8000-000000000000'; } };
+global.HTMLElement=class {};
 
 const root = path.resolve(__dirname, '..');
-const moduleSources = ['ui-store.js', 'provider-catalog.js'].map(name => fs.readFileSync(path.join(root, 'static', 'modules', name), 'utf8'));
+const moduleSources = ['ui-store.js', 'provider-catalog.js','document-ui.js','workflow-ui.js'].map(name => fs.readFileSync(path.join(root, 'static', 'modules', name), 'utf8'));
 const appSource = [...moduleSources, fs.readFileSync(path.join(root, 'static', 'app.js'), 'utf8')].join('\n');
 vm.runInThisContext(appSource, { filename: 'app.js' });
 if (!definition) throw new Error('Vue application contract not captured');
 
-const app = { ...definition.data(), ...definition.methods };
+const app = { ...Object.assign({},...definition.mixins.map(m=>m.data()),...definition.mixins.map(m=>m.methods)),...definition.data(), ...definition.methods,$refs:{} };
 const codexOnly = {settings:{workerHarness:'codex',model:''},providers:[],agentRuntime:{selected:'codex'},selectedProvider:null};
 codexOnly.workerUsesOwnModel = definition.computed.workerUsesOwnModel.call(codexOnly);
 if (!definition.computed.textRouteReady.call(codexOnly)) throw new Error('Codex-only fresh install must not require an imported Provider.');

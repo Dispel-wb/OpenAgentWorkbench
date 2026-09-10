@@ -64,6 +64,8 @@ try {
     }
     & $node (Join-Path $PSScriptRoot 'native_adapter_smoke.js') $runtime.port $secret
     if ($LASTEXITCODE -ne 0) { throw 'Existing Adapter conversion smoke failed' }
+    & $node (Join-Path $PSScriptRoot 'provider-protocol-matrix.js') $runtime.port $secret
+    if ($LASTEXITCODE -ne 0) { throw 'Provider protocol matrix failed' }
 }
 finally {
     if ($hostProcess -and -not $hostProcess.HasExited) { Stop-Process -Id $hostProcess.Id -Force -ErrorAction SilentlyContinue }
