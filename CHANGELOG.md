@@ -4,7 +4,8 @@
 
 - Candidate binaries now carry 1.0.0 metadata so the exact intended release bytes can undergo long-term testing. This is an unreleased candidate, not a completed certification or published stable release.
 - Fixed duplicate rendering when a buffered streaming delta and terminal result arrive in the same poll; verified the old failure and corrected behavior in native WebView2.
-- Added an isolated 68-case offline regression runner with binary/script hashes and retained per-case logs; corrected stale Local-edition assumptions and explicit UTF-8 decoding in regression tests.
+- Fixed terminal polling returning stale metadata when background reconciliation wins the finalization race; a controlled two-case regression reproduces the old failure without relying on timing luck.
+- Added an isolated 69-case offline regression runner with binary/script hashes and retained per-case logs; corrected stale Local-edition assumptions, explicit UTF-8 decoding, inherited provider defaults and missing offline CLI/fallback fixtures. All 100 fault cycles retain their assertions with a separate hosted-runner time budget.
 - Added timed same-Host Pi workload validation with repeated two-turn conversations, permission rejection, process-tree cancellation, SQLite/health checks and active-time accounting that excludes long suspension gaps.
 
 - Added the optional, locked Pi 0.85.1 native RPC adapter with explicit permission limits, persisted sessions, process-tree cancellation and genuine loopback-model tests.

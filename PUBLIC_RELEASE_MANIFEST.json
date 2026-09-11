@@ -207,6 +207,8 @@
     "tests/startup-registration-integration.ps1",
     "tests/task-security-selftest.ps1",
     "tests/task-workspace-selftest.ps1",
+    "tests/terminal-poll-race-selftest.cs",
+    "tests/terminal-poll-race-selftest.ps1",
     "tests/terminal-profile-integration.ps1",
     "tests/terminal-run-reconciliation.ps1",
     "tests/tool-runtime-integration.ps1",

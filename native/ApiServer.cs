@@ -2017,7 +2017,18 @@ namespace ClaudeCodeWorkbench
             var durationMs = job.ElapsedMilliseconds();
             lock (job.StateGate)
             {
-                if (!job.IsActive) return false;
+                if (!job.IsActive)
+                {
+                    // The background reconciler may have won after PollChat read status.json.
+                    // Return its persisted metadata without recording the outcome a second time.
+                    var reconciled = JsonUtil.Read(job.StatusPath, null) as JObject;
+                    if (reconciled != null && string.Equals((string)reconciled["state"], state, StringComparison.Ordinal))
+                    {
+                        status.RemoveAll();
+                        status.Merge(reconciled);
+                    }
+                    return false;
+                }
                 if (state == JobStates.Completed)
                 {
                     var inputState = JsonUtil.Read(job.InputStatePath, new JObject()) as JObject ?? new JObject();

@@ -81,6 +81,11 @@ try {
     $successPoll = Api $connection "/api/chat/poll/$($success.jobId)?after=0"
     if ($successPoll.status.state -ne 'completed' -or -not (@($successPoll.events.payload) -join "`n").Contains('background-terminal-success')) { throw 'Completed background Run could not be read after convergence' }
 
+    Api $connection '/api/providers' 'POST' @{
+        id='offline-fallback';name='Offline Fallback';token='fallback-fixture';authStyle='bearer'
+        text=@{enabled=$true;protocol='openai';baseUrl='http://127.0.0.1:9/v1';models=@('fallback-model')}
+        image=@{enabled=$false;protocol='openai-images';baseUrl='';models=@()}
+    } | Out-Null
     $failed = Start-FixtureRun $connection $root 'provider-auth-failure'
     $failedConvergence = Wait-HostTerminal $connection $runtimePath $failed.jobId
     $failedStatus = Get-Content -LiteralPath (Join-Path $root ".claude-gui-v2\runs\$($failed.jobId)\status.json") -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -89,6 +94,7 @@ try {
     if (-not $failedStatus.providerHealthRecorded -or $null -eq $failedStatus.fallbackDecision) {
         throw ('Background failure did not retain Provider evidence and fallback decision: ' + ($failedStatus | Select-Object state,worker,harness,providerHealthRecorded,providerHealthSkipped,failureClassification | ConvertTo-Json -Depth 6 -Compress))
     }
+    if ($failedStatus.fallbackDecision.automatic -ne $false -or @($failedStatus.fallbackDecision.candidates | Where-Object providerId -eq 'offline-fallback').Count -ne 1) { throw 'Explicit fallback fixture was missing or selected without user confirmation' }
     $failureJson = $failedStatus | ConvertTo-Json -Depth 16 -Compress
     if ($failureJson.Contains('sk-provider-health-secret-value') -or $failureJson.Contains('background-secret')) { throw 'Background terminal evidence leaked a secret' }
     $metrics = Api $connection '/api/workbench/metrics'

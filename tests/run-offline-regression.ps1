@@ -38,6 +38,7 @@ foreach($name in $hostTests){Add-Case $name "$name.ps1"}
 foreach($name in @('product-gaps-selftest','webview-runtime-selftest','sdk-frame-reader-selftest')){Add-Case $name "$name.ps1" @('-DependencyRoot',$DependencyRoot) $false}
 foreach($name in @('release-ci-gate-selftest','release-signature-policy-selftest','v1-readiness-selftest')){Add-Case $name "$name.ps1" @() $false}
 Add-Case 'agent-worker-sdk-integration' 'agent-worker-sdk-integration.ps1' @('-DependencyRoot',$DependencyRoot)
+Add-Case 'terminal-poll-race-selftest' 'terminal-poll-race-selftest.ps1'
 Add-Case 'pi-host-integration' 'pi-host-integration.ps1' @('-PiEntry',(Join-Path $source 'runtimes/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js'))
 Add-Case 'edition-smoke' 'edition-smoke.ps1' @('-ExpectedEdition','opensource','-NodePath',$node)
 foreach($fault in @('','oversize','flood','byte-flood','malformed','eof')){
@@ -68,6 +69,8 @@ foreach($case in $cases){
     $start.FileName=if($isJs){$node}else{$pwsh}
     $start.WorkingDirectory=$source;$start.UseShellExecute=$false;$start.CreateNoWindow=$true
     $start.Environment['WORKBENCH_TEST_DEPENDENCY_ROOT']=$DependencyRoot
+    # Do not let the developer's provider migration defaults satisfy offline fixtures.
+    foreach($key in @('ANTHROPIC_API_KEY','ANTHROPIC_AUTH_TOKEN','ANTHROPIC_BASE_URL')) { $start.Environment.Remove($key) | Out-Null }
     $start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
     $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false);$start.StandardErrorEncoding=[Text.UTF8Encoding]::new($false)
     if(-not$isJs){foreach($arg in @('-NoProfile','-NonInteractive','-File')){$start.ArgumentList.Add($arg)}}
