@@ -129,8 +129,10 @@ try {
     $deadline=(Get-Date).AddSeconds(20)
     do {
         Start-Sleep -Milliseconds 100
-        $lostStatus=Get-Content -LiteralPath (Join-Path $lostRoot 'status.json') -Raw -Encoding UTF8|ConvertFrom-Json
-    } while($lostStatus.state -eq 'running' -and (Get-Date) -lt $deadline)
+        $lostStatus=$null
+        try { $lostStatus=Get-Content -LiteralPath (Join-Path $lostRoot 'status.json') -Raw -Encoding UTF8|ConvertFrom-Json }
+        catch [IO.IOException] { } # The Host may be atomically replacing this file during recovery.
+    } while(($null-eq$lostStatus-or$lostStatus.state -eq 'running') -and (Get-Date) -lt $deadline)
     if($lostStatus.state -ne 'failed' -or $lostStatus.message -notmatch '未自动重放' -or (Test-Path (Join-Path $lostRoot 'pid.txt'))){throw 'Lost DSH/Pi core was automatically replayed'}
     }
     [pscustomobject]@{ AgentWorkerSdk = 'PASS'; Protocol = 'claude-stream-json-v1'; CodexTurns = $results.Count; Utf8 = $true; ResumeState = $true; ProviderlessHostRun = $true; TerminalFailurePreserved = $true; UnsupportedApprovalDenied = $true; ActiveMemoryDelivered = $true; LostDshReplaySuppressed = $true; LostPiReplaySuppressed = $true } | Format-List
