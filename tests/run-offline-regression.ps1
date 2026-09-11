@@ -34,7 +34,10 @@ $hostTests=@(
     'native-diagnostics-selftest','host-startup-failure-selftest','native-soak-recovery-integration',
     'native-soak-resilience-integration','native-soak-status-integration'
 )
-foreach($name in $hostTests){Add-Case $name "$name.ps1"}
+foreach($name in $hostTests){
+    $hostArguments=if($name-eq'native-agent-fault-stress'){@('-ObserverDelayMilliseconds','500')}else{@()}
+    Add-Case $name "$name.ps1" $hostArguments
+}
 foreach($name in @('product-gaps-selftest','webview-runtime-selftest','sdk-frame-reader-selftest')){Add-Case $name "$name.ps1" @('-DependencyRoot',$DependencyRoot) $false}
 foreach($name in @('release-ci-gate-selftest','release-signature-policy-selftest','v1-readiness-selftest')){Add-Case $name "$name.ps1" @() $false}
 Add-Case 'agent-worker-sdk-integration' 'agent-worker-sdk-integration.ps1' @('-DependencyRoot',$DependencyRoot)

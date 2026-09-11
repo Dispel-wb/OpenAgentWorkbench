@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)][string]$Executable,
-    [int]$Cycles = 100
+    [int]$Cycles = 100,
+    [ValidateRange(0,5000)][int]$ObserverDelayMilliseconds = 0
 )
 $ErrorActionPreference = 'Stop'
 
@@ -11,7 +12,7 @@ function Wait-Until([scriptblock]$Action, [scriptblock]$Predicate, [int]$Seconds
         $value = & $Action
         if (& $Predicate $value) { return $value }
     } while ((Get-Date) -lt $expires)
-    throw 'Timed out waiting for fault-injection state'
+    throw "Timed out waiting for fault-injection state: $script:stressStage; state=$($value.state); runState=$($value.status.state); sent=$($value.sentOffset); completed=$($value.completedOffset)"
 }
 
 function Connect-Host([string]$RuntimePath, [int]$PreviousPid = 0) {
@@ -60,10 +61,13 @@ $env:CLAUDE_GUI_ROOT = 'D:\softwares\ClaudeCode'
 $env:CLAUDE_GUI_CLAUDE_EXE = $fake
 $env:CLAUDE_GUI_TEST_MODE = '1'
 $env:CLAUDE_GUI_MUTEX_SCOPE = 'fault-stress-' + [guid]::NewGuid().ToString('N')
+$faultGate = Join-Path $root 'fault-input.gate'
+$env:CLAUDE_GUI_FAULT_GATE_FILE = $faultGate
 $runtimePath = Join-Path $root '.claude-gui-v2\runtime-state.json'
 $hostProcess = $null
 try {
     $hostProcess = Start-Process -FilePath $Executable -ArgumentList '--host' -WorkingDirectory $root -WindowStyle Hidden -PassThru
+    $script:stressStage = 'initial Host startup'
     $connection = Connect-Host $runtimePath
     Api $connection '/api/providers' 'POST' @{
         id='offline-stress';name='Offline Stress';token='stub-token';authStyle='bearer'
@@ -75,12 +79,16 @@ try {
         $sessionId = [guid]::NewGuid().ToString()
         $requestId = 'stress-request-' + $cycle
         $prompt = 'fault-recovery-' + $cycle
+        # Keep the worker in flight until this test has observed the durable input and restarted the Host.
+        [IO.File]::WriteAllText($faultGate, [string]$cycle)
         $job = Api $connection '/api/chat/start' 'POST' @{
             workspace=$root;prompt=$prompt;sessionId=$sessionId;claudeSessionId=$sessionId
             resume=$false;requestId=$requestId;providerId='offline-stress';model='offline-model'
             effort='low';permissionMode='readonly';attachments=@();allowedDirs=@();allowedTools=@();disallowedTools=@()
         }
         $inputState = Join-Path $root ".claude-gui-v2\runs\$($job.jobId)\worker-input-state.json"
+        $script:stressStage = "cycle $cycle in-flight input observation"
+        if ($ObserverDelayMilliseconds -gt 0) { Start-Sleep -Milliseconds $ObserverDelayMilliseconds }
         Wait-Until {
             if (Test-Path -LiteralPath $inputState) { Get-Content -LiteralPath $inputState -Raw -Encoding UTF8 | ConvertFrom-Json }
         } { param($v) $null -ne $v -and [long]$v.sentOffset -gt [long]$v.completedOffset } | Out-Null
@@ -88,7 +96,10 @@ try {
         $oldPid = [int]$connection.Runtime.pid
         Stop-Process -Id $oldPid -Force
         $hostProcess = Start-Process -FilePath $Executable -ArgumentList '--host' -WorkingDirectory $root -WindowStyle Hidden -PassThru
+        $script:stressStage = "cycle $cycle Host restart"
         $connection = Connect-Host $runtimePath $oldPid
+        [IO.File]::Delete($faultGate)
+        $script:stressStage = "cycle $cycle terminal result"
         $poll = Wait-Until { Api $connection ("/api/chat/poll/$($job.jobId)?after=0") } { param($v) $v.status.state -eq 'completed' }
         $results = @($poll.events | Where-Object { $_.payload -match '"type":"result"' }).Count
         if ($results -ne 1) { throw "Cycle $cycle produced $results business results" }
@@ -111,5 +122,5 @@ finally {
     Get-CimInstance Win32_Process | Where-Object {
         $_.ExecutablePath -eq $Executable -or $_.ExecutablePath -eq $fake
     } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
-    Remove-Item Env:CLAUDE_GUI_WORKSPACE,Env:CLAUDE_GUI_ROOT,Env:CLAUDE_GUI_CLAUDE_EXE,Env:CLAUDE_GUI_TEST_MODE,Env:CLAUDE_GUI_MUTEX_SCOPE -ErrorAction SilentlyContinue
+    Remove-Item Env:CLAUDE_GUI_WORKSPACE,Env:CLAUDE_GUI_ROOT,Env:CLAUDE_GUI_CLAUDE_EXE,Env:CLAUDE_GUI_TEST_MODE,Env:CLAUDE_GUI_MUTEX_SCOPE,Env:CLAUDE_GUI_FAULT_GATE_FILE -ErrorAction SilentlyContinue
 }

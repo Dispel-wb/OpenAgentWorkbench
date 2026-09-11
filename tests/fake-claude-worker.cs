@@ -70,7 +70,20 @@ internal static class FakeClaudeWorker
                 }
                 if (text.Contains("中断恢复")) System.Threading.Thread.Sleep(1200);
                 if (text.Contains("run-center-slow")) System.Threading.Thread.Sleep(15000);
-                if (text.Contains("fault-recovery")) System.Threading.Thread.Sleep(300);
+                if (text.Contains("fault-recovery"))
+                {
+                    var gate = Environment.GetEnvironmentVariable("CLAUDE_GUI_FAULT_GATE_FILE");
+                    if (string.IsNullOrWhiteSpace(gate)) System.Threading.Thread.Sleep(300);
+                    else
+                    {
+                        var deadline = DateTime.UtcNow.AddSeconds(60);
+                        while (File.Exists(gate))
+                        {
+                            if (DateTime.UtcNow >= deadline) throw new TimeoutException("Fault fixture gate was not released");
+                            System.Threading.Thread.Sleep(10);
+                        }
+                    }
+                }
                 if (text.Contains("provider-rate-limit"))
                 {
                     output.WriteLine(new JObject
