@@ -36,9 +36,9 @@ $root = [IO.Path]::GetFullPath((Join-Path $tempRoot ('claude-run-preparation-' +
 if (-not $root.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe run preparation fixture root' }
 [IO.Directory]::CreateDirectory($root) | Out-Null
 $fake = Join-Path $root 'fake-claude.exe'
-$vsRoot = 'C:\Program Files\Microsoft Visual Studio\2022\Community'
-$csc = Join-Path $vsRoot 'MSBuild\Current\Bin\Roslyn\csc.exe'
-$json = Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\NuGet\Newtonsoft.Json.dll'
+$testDependencies = & (Join-Path $PSScriptRoot 'resolve-test-build-dependencies.ps1')
+$csc = $testDependencies.Compiler
+$json = $testDependencies.Json
 & $csc /nologo /target:exe /platform:x64 "/out:$fake" "/reference:$json" (Join-Path $PSScriptRoot 'fake-claude-worker.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Fake Claude build failed' }
 Copy-Item -LiteralPath $json -Destination (Join-Path $root 'Newtonsoft.Json.dll')

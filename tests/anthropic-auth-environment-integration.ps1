@@ -14,7 +14,7 @@ function Api($Connection,[string]$Path,[string]$Method='GET',$Body=$null){$r=@{U
 function Run-Provider($Connection,[string]$Provider,[string]$Model,[string]$Prompt){$session=[guid]::NewGuid().ToString();$run=Api $Connection '/api/chat/start' 'POST' @{workspace=$root;prompt=$Prompt;sessionId=$session;claudeSessionId=$session;resume=$false;requestId=('auth-env-'+[guid]::NewGuid().ToString('N'));providerId=$Provider;model=$Model;effort='low';permissionMode='readonly';maxTurns=10;attachments=@();allowedDirs=@();allowedTools=@();disallowedTools=@()};Wait-Until {Api $Connection ('/api/chat/poll/'+$run.jobId)} {param($v)($v.status.terminalState??$v.status.state)-eq'completed'}|Out-Null;return $run.jobId}
 
 try{
-    $vsRoot='C:\Program Files\Microsoft Visual Studio\2022\Community';$csc=Join-Path $vsRoot 'MSBuild\Current\Bin\Roslyn\csc.exe';$json=Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\NuGet\Newtonsoft.Json.dll'
+    $testDependencies = & (Join-Path $PSScriptRoot 'resolve-test-build-dependencies.ps1');$csc = $testDependencies.Compiler;$json = $testDependencies.Json
     &$csc /nologo /target:exe /platform:x64 "/out:$fake" "/reference:$json" (Join-Path $PSScriptRoot 'fake-claude-worker.cs');if($LASTEXITCODE-ne0){throw'Fake Claude build failed'};Copy-Item $json (Join-Path $root 'Newtonsoft.Json.dll')
     $env:CLAUDE_GUI_WORKSPACE=$root;$env:CLAUDE_GUI_ROOT='D:\softwares\ClaudeCode';$env:CLAUDE_GUI_CLAUDE_EXE=$fake;$env:CLAUDE_GUI_TEST_MODE='1';$env:CLAUDE_GUI_MUTEX_SCOPE='anthropic-auth-'+[guid]::NewGuid().ToString('N');$env:CLAUDE_GUI_AUTH_CAPTURE=$capture
     $hostProcess=Start-Process -FilePath $Executable -ArgumentList '--host' -WorkingDirectory $root -WindowStyle Hidden -PassThru

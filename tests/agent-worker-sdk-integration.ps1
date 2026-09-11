@@ -29,6 +29,8 @@ try {
     $start.Arguments = '--agent-worker-bridge "' + $config.Replace('"','\"') + '"'
     $start.UseShellExecute = $false; $start.CreateNoWindow = $true
     $start.RedirectStandardInput = $true; $start.RedirectStandardOutput = $true; $start.RedirectStandardError = $true
+    $start.StandardOutputEncoding = [Text.UTF8Encoding]::new($false)
+    $start.StandardErrorEncoding = [Text.UTF8Encoding]::new($false)
     $start.Environment['WORKBENCH_TEST_PROCESS']='1'
     $process = [Diagnostics.Process]::Start($start)
     $inputBytes = [Text.Encoding]::UTF8.GetBytes($first + "`n" + $second + "`n")

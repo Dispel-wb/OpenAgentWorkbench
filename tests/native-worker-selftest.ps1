@@ -3,9 +3,9 @@ $ErrorActionPreference = 'Stop'
 $root = Join-Path ([IO.Path]::GetTempPath()) ('claude-native-worker-' + [guid]::NewGuid().ToString('N'))
 $fake = Join-Path $root 'fake-claude.exe'
 [IO.Directory]::CreateDirectory($root) | Out-Null
-$vsRoot = 'C:\Program Files\Microsoft Visual Studio\2022\Community'
-$csc = Join-Path $vsRoot 'MSBuild\Current\Bin\Roslyn\csc.exe'
-$json = Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\NuGet\Newtonsoft.Json.dll'
+$testDependencies = & (Join-Path $PSScriptRoot 'resolve-test-build-dependencies.ps1')
+$csc = $testDependencies.Compiler
+$json = $testDependencies.Json
 $source = Join-Path $PSScriptRoot 'fake-claude-worker.cs'
 & $csc /nologo /target:exe /platform:x64 "/out:$fake" "/reference:$json" $source
 if ($LASTEXITCODE -ne 0) { throw "Fake worker build failed: $LASTEXITCODE" }

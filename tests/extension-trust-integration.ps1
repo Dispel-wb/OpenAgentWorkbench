@@ -41,7 +41,7 @@ $claudeFile = Join-Path $root 'CLAUDE.md'
 [IO.File]::WriteAllText($claudeFile,"# Trusted project instructions`nPROJECT_INSTRUCTION_BODY`n",[Text.UTF8Encoding]::new($false))
 $mcpFile = Join-Path $root '.mcp.json'
 [IO.File]::WriteAllText($mcpFile,'{"mcpServers":{"fixture":{"command":"fixture-mcp.exe","args":["--stdio"],"env":{"MCP_SECRET":"fixture-secret-must-not-leak"}}}}',[Text.UTF8Encoding]::new($false))
-$fake = Join-Path $root 'fake-claude.exe'; $vsRoot='C:\Program Files\Microsoft Visual Studio\2022\Community';$csc=Join-Path $vsRoot 'MSBuild\Current\Bin\Roslyn\csc.exe';$json=Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\NuGet\Newtonsoft.Json.dll'
+$fake = Join-Path $root 'fake-claude.exe'; $testDependencies = & (Join-Path $PSScriptRoot 'resolve-test-build-dependencies.ps1');$csc = $testDependencies.Compiler;$json = $testDependencies.Json
 & $csc /nologo /target:exe /platform:x64 "/out:$fake" "/reference:$json" (Join-Path $PSScriptRoot 'fake-claude-worker.cs'); if($LASTEXITCODE -ne 0){throw 'Fake worker build failed'}; Copy-Item $json (Join-Path $root 'Newtonsoft.Json.dll')
 $env:CLAUDE_GUI_WORKSPACE=$root;$env:CLAUDE_GUI_ROOT='D:\softwares\ClaudeCode';$env:CLAUDE_GUI_CLAUDE_EXE=$fake;$env:CLAUDE_GUI_TEST_MODE='1';$env:CLAUDE_GUI_MUTEX_SCOPE='extension-trust-'+[guid]::NewGuid().ToString('N')
 $runtimePath=Join-Path $root '.claude-gui-v2\runtime-state.json';$hostProcess=$null

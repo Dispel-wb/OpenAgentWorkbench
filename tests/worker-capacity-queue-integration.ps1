@@ -10,7 +10,7 @@ function Api-Status($Connection,[string]$Path,$Body){
 }
 
 $root=Join-Path ([IO.Path]::GetTempPath()) ('claude-capacity-'+[guid]::NewGuid().ToString('N'));[IO.Directory]::CreateDirectory($root)|Out-Null
-$fake=Join-Path $root 'fake-claude.exe';$vsRoot='C:\Program Files\Microsoft Visual Studio\2022\Community';$csc=Join-Path $vsRoot 'MSBuild\Current\Bin\Roslyn\csc.exe';$json=Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\NuGet\Newtonsoft.Json.dll'
+$fake=Join-Path $root 'fake-claude.exe';$testDependencies = & (Join-Path $PSScriptRoot 'resolve-test-build-dependencies.ps1');$csc = $testDependencies.Compiler;$json = $testDependencies.Json
 &$csc /nologo /target:exe /platform:x64 "/out:$fake" "/reference:$json" (Join-Path $PSScriptRoot 'fake-claude-worker.cs');if($LASTEXITCODE-ne0){throw'Fake worker build failed'};Copy-Item -LiteralPath $json -Destination (Join-Path $root 'Newtonsoft.Json.dll');Add-Type -LiteralPath $json
 $env:CLAUDE_GUI_WORKSPACE=$root;$env:CLAUDE_GUI_ROOT='D:\softwares\ClaudeCode';$env:CLAUDE_GUI_CLAUDE_EXE=$fake;$env:CLAUDE_GUI_TEST_MODE='1';$env:CLAUDE_GUI_MUTEX_SCOPE='capacity-'+[guid]::NewGuid().ToString('N')
 $runtimePath=Join-Path $root '.claude-gui-v2\runtime-state.json';$hostProcess=Start-Process -FilePath $Executable -ArgumentList '--host' -WorkingDirectory $root -WindowStyle Hidden -PassThru

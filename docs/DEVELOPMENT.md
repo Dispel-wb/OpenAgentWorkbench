@@ -33,3 +33,15 @@ node .\tests\ui-contract-selftest.js
 默认中文语境，技术名词不必强译。保持现有前后端边界，逐步提取大文件，不为单一功能建立通用框架。修改数据库增加版本迁移和旧数据回归，不手改用户数据库。
 
 协议兼容问题保留脱敏错误证据。流式请求在可能已经产生输出或副作用后，不应透明重放；取消应传播到上游。测试失败不能通过隐藏错误、放宽权限或增加等待时长掩盖。
+
+## 完整离线回归
+
+恢复锁定依赖并构建 OpenSource 候选后，从项目根目录运行：
+
+```powershell
+.\tests\run-offline-regression.ps1 -Executable .\dist\candidate\OpenAgentWorkbench.exe -OutputDirectory .\dist\regression-new -DependencyRoot .\.packages
+```
+
+需 PowerShell 7、Node.js 和已恢复的 Pi runtime；测试使用锁定编译器，不依赖 Visual Studio Community 安装路径。输出目录必须是新目录，保留之前的失败证据。每个用例使用独立的 EXE 副本和进程，避免按程序路径清理时影响正式安装或长期测试。报告记录候选摘要、测试文件摘要、退出码、超时和日志；运行期间修改候选或已有测试文件会使整轮证据无效。
+
+这套 68 项回归是离线验证，不替代原生键盘/读屏器、干净 Windows 矩阵、付费模型服务、独立安全复核或 72 小时稳定性验收。

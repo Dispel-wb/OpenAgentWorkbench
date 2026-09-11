@@ -16,8 +16,8 @@ using Newtonsoft.Json.Linq;
 [assembly: AssemblyTitle(ClaudeCodeWorkbench.EditionInfo.ProductName)]
 [assembly: AssemblyProduct(ClaudeCodeWorkbench.EditionInfo.ProductName)]
 #if OPEN_SOURCE
-[assembly: AssemblyVersion("0.7.0.0")]
-[assembly: AssemblyFileVersion("0.7.0.0")]
+[assembly: AssemblyVersion("1.0.0.0")]
+[assembly: AssemblyFileVersion("1.0.0.0")]
 #else
 [assembly: AssemblyVersion("6.4.24.0")]
 [assembly: AssemblyFileVersion("6.4.24.0")]

@@ -28,4 +28,4 @@
 - ApiServer / WorkbenchApi / app.js 仍需逐步拆分。KISS 检查提示大文件和分支密集；本轮提取 Worker bridge、Artifact、Provider catalog、UI Store，保留协议状态机的必要分支，不为降低静态计数大改业务。
 - CI/CD 的远程执行结果必须在 Actions 中确认；本地脚本通过不能替代远程结果。Self-hosted 矩阵需要维护者提供隔离测试机。
 
-没有可信代码签名证书，未使用自签名伪装可信发行者。当前仍是 Preview，不是 1.0.0。
+没有可信代码签名证书，未使用自签名伪装可信发行者。候选现携带 1.0.0 元数据用于同字节长期测试，但尚未验收或发布为正式版。

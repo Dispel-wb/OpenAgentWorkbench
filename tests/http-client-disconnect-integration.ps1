@@ -43,7 +43,7 @@ try {
     $crashes = if (Test-Path -LiteralPath $crashLog) { Get-Content -LiteralPath $crashLog -Raw -Encoding UTF8 } else { '' }
     if ($crashes -match 'HttpRoute|不存在的网络连接|nonexistent network connection') { throw 'Expected client disconnect was recorded as a Host crash' }
     $health = Invoke-RestMethod -Uri "http://127.0.0.1:$($runtime.port)/api/workbench/health" -Headers @{'X-Desktop-Secret'=$secret;'X-Workbench-Protocol'='2'} -TimeoutSec 10
-    if (-not [bool]$health.durableJobState -or $health.version -ne '6.4.21-dev.native.local') { throw 'Host did not remain healthy after client disconnects' }
+    if (-not [bool]$health.durableJobState -or [string]::IsNullOrWhiteSpace($runtime.appVersion) -or $health.version -ne $runtime.appVersion) { throw 'Host did not remain healthy after client disconnects' }
     [pscustomobject]@{ HttpClientDisconnect='PASS'; AbruptDisconnects=24; CrashMetricPollution=$false; HostAlive=$true; DurableJobState=$health.durableJobState; Workspace=$root } | Format-List
 }
 finally {

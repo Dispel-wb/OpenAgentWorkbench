@@ -18,7 +18,7 @@ function Api($Connection,[string]$Path,[string]$Method='GET',$Body=$null) {
     Invoke-RestMethod @request
 }
 $root=Join-Path ([IO.Path]::GetTempPath()) ('claude-m2-'+[guid]::NewGuid().ToString('N'));[IO.Directory]::CreateDirectory($root)|Out-Null
-$fake=Join-Path $root 'fake-claude.exe';$vsRoot='C:\Program Files\Microsoft Visual Studio\2022\Community';$csc=Join-Path $vsRoot 'MSBuild\Current\Bin\Roslyn\csc.exe';$json=Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\NuGet\Newtonsoft.Json.dll'
+$fake=Join-Path $root 'fake-claude.exe';$testDependencies = & (Join-Path $PSScriptRoot 'resolve-test-build-dependencies.ps1');$csc = $testDependencies.Compiler;$json = $testDependencies.Json
 & $csc /nologo /target:exe /platform:x64 "/out:$fake" "/reference:$json" (Join-Path $PSScriptRoot 'fake-claude-worker.cs');if($LASTEXITCODE -ne 0){throw 'Fake worker build failed'};Copy-Item $json (Join-Path $root 'Newtonsoft.Json.dll')
 $workspace=Join-Path $root 'repo';[IO.Directory]::CreateDirectory($workspace)|Out-Null
 & git -C $workspace init | Out-Null;& git -C $workspace config user.email workbench@example.invalid;& git -C $workspace config user.name Workbench-Test

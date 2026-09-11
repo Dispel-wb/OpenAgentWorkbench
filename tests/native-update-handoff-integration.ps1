@@ -48,19 +48,21 @@ if (-not ($root.TrimEnd('\') + '\').StartsWith($tempRoot, [StringComparison]::Or
 [IO.Directory]::CreateDirectory($root) | Out-Null
 [IO.Directory]::CreateDirectory($rollbackRoot) | Out-Null
 
-$vsRoot = 'C:\Program Files\Microsoft Visual Studio\2022\Community'
-$csc = Join-Path $vsRoot 'MSBuild\Current\Bin\Roslyn\csc.exe'
-$json = Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\NuGet\Newtonsoft.Json.dll'
+$testDependencies = & (Join-Path $PSScriptRoot 'resolve-test-build-dependencies.ps1')
+$csc = $testDependencies.Compiler
+$json = $testDependencies.Json
 $fake = Join-Path $root 'fake-claude.exe'
 & $csc /nologo /target:exe /platform:x64 "/out:$fake" "/reference:$json" (Join-Path $PSScriptRoot 'fake-claude-worker.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Fake Claude build failed' }
 Copy-Item -LiteralPath $json -Destination (Join-Path $root 'Newtonsoft.Json.dll')
 
 $targetRoot = Join-Path $root 'install'
-$target = Join-Path $targetRoot 'ClaudeCodeWorkbench.exe'
+$exeName = [IO.Path]::GetFileName($Executable)
+$previousName = [IO.Path]::GetFileNameWithoutExtension($Executable) + '.previous.exe'
+$target = Join-Path $targetRoot $exeName
 $data = Join-Path $root '.claude-gui-v2'
 $stageRoot = Join-Path $data 'updates\6-4-5-test'
-$staged = Join-Path $stageRoot 'ClaudeCodeWorkbench.exe'
+$staged = Join-Path $stageRoot $exeName
 [IO.Directory]::CreateDirectory($targetRoot) | Out-Null
 [IO.Directory]::CreateDirectory($stageRoot) | Out-Null
 Copy-Item -LiteralPath $Executable -Destination $target
@@ -132,16 +134,16 @@ try {
         $path = Join-Path $data 'update-result.json'
         if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json }
     } { param($value) $null -ne $value -and $value.state -eq 'installed' } 35 'installed update result'
-    if (-not (Test-Path -LiteralPath (Join-Path $targetRoot 'ClaudeCodeWorkbench.previous.exe'))) { throw 'Previous EXE was not retained' }
+    if (-not (Test-Path -LiteralPath (Join-Path $targetRoot $previousName))) { throw 'Previous EXE was not retained' }
     if ((Get-FileHash -LiteralPath $target -Algorithm SHA256).Hash -ne $hash) { throw 'Updated target hash mismatch' }
     $handoffPid = [int]$connection.Runtime.pid
 
     Stop-Exact $target
     $rbTargetRoot = Join-Path $rollbackRoot 'install'
-    $rbTarget = Join-Path $rbTargetRoot 'ClaudeCodeWorkbench.exe'
+    $rbTarget = Join-Path $rbTargetRoot $exeName
     $rbData = Join-Path $rollbackRoot '.claude-gui-v2'
     $rbStageRoot = Join-Path $rbData 'updates\6-4-5-test'
-    $rbStaged = Join-Path $rbStageRoot 'ClaudeCodeWorkbench.exe'
+    $rbStaged = Join-Path $rbStageRoot $exeName
     [IO.Directory]::CreateDirectory($rbTargetRoot) | Out-Null
     [IO.Directory]::CreateDirectory($rbStageRoot) | Out-Null
     Copy-Item -LiteralPath $Executable -Destination $rbTarget
@@ -158,7 +160,7 @@ try {
     if (-not $updater.WaitForExit(5000)) { throw 'Updater process did not exit after rollback result was written' }
     if ($updater.ExitCode -ne 2) { throw "Rollback updater exit code was $($updater.ExitCode), expected 2" }
     if ($rbResult.state -ne 'rolled-back' -or $rbResult.error -notmatch 'Injected startup') { throw 'Injected startup failure did not produce an audited rollback' }
-    if (-not (Test-Path -LiteralPath (Join-Path $rbTargetRoot 'ClaudeCodeWorkbench.previous.exe'))) { throw 'Rollback did not preserve previous EXE' }
+    if (-not (Test-Path -LiteralPath (Join-Path $rbTargetRoot $previousName))) { throw 'Rollback did not preserve previous EXE' }
     $rbRuntime = Wait-Until {
         $path = Join-Path $rbData 'runtime-state.json'; if (Test-Path -LiteralPath $path) { Get-Content -LiteralPath $path -Raw -Encoding UTF8 | ConvertFrom-Json }
     } { param($value) $null -ne $value -and $value.state -eq 'running' } 25 'rolled-back Host'

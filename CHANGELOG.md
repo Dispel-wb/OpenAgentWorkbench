@@ -2,6 +2,11 @@
 
 ## Unreleased — 1.0.0 readiness work
 
+- Candidate binaries now carry 1.0.0 metadata so the exact intended release bytes can undergo long-term testing. This is an unreleased candidate, not a completed certification or published stable release.
+- Fixed duplicate rendering when a buffered streaming delta and terminal result arrive in the same poll; verified the old failure and corrected behavior in native WebView2.
+- Added an isolated 68-case offline regression runner with binary/script hashes and retained per-case logs; corrected stale Local-edition assumptions and explicit UTF-8 decoding in regression tests.
+- Added timed same-Host Pi workload validation with repeated two-turn conversations, permission rejection, process-tree cancellation, SQLite/health checks and active-time accounting that excludes long suspension gaps.
+
 - Added the optional, locked Pi 0.85.1 native RPC adapter with explicit permission limits, persisted sessions, process-tree cancellation and genuine loopback-model tests.
 - Fixed fresh-start workspace precedence so the UI does not replace the Host's C-drive or Unicode workspace with a hard-coded D-drive default.
 - Added a shared raw-frame retention budget for DSHarness, covering both the mailbox and pre-acknowledgement notifications.

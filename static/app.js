@@ -433,7 +433,7 @@ const workbenchApp=createApp({
       if(obj.type==='user'){
         for(const block of obj.message?.content||[]){if(block.type==='tool_result')this.applyToolResult(block);}this.scrollBottom();return;
       }
-      if (obj.type === 'result') { this.finalResult = obj; if (!this.streamMessage.text.trim()) this.streamMessage.text = obj.result || ''; }
+      if (obj.type === 'result') { this.flushStreamText(); this.finalResult = obj; if (!this.streamMessage.text.trim()) this.streamMessage.text = obj.result || ''; }
     },
     toolName(name) { return ({Read:'读取文件',Write:'写入文件',Edit:'修改文件',Bash:'执行命令',Glob:'查找文件',Grep:'搜索内容',WebSearch:'网络搜索',WebFetch:'读取网页',Task:'运行 Agent',Agent:'运行 Agent',Skill:'运行 Skill'})[name] || `调用 ${name}`; },
     toolResultText(content){if(typeof content==='string')return content;if(!Array.isArray(content))return content==null?'':JSON.stringify(content,null,2);return content.map(block=>{if(typeof block==='string')return block;if(block?.type==='text')return block.text||'';if(block?.type==='image')return '[工具返回了图片]';return JSON.stringify(block,null,2);}).filter(Boolean).join('\n');},

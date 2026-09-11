@@ -266,8 +266,24 @@ if (!workbenchApi.includes('/api/workbench/extensions/trust') || !apiServer.incl
   throw new Error('Project extension trust, fingerprint, and backend-block contract is incomplete');
 }
 
+// Delta and terminal events can arrive in the same poll, before the 32ms flush.
+// A terminal fallback must not be prepended to an unflushed copy of that text.
+const streamed = { ...definition.data(), ...definition.methods, scrollBottom() {} };
+for (const scenario of ['buffered', 'already-flushed', 'terminal-only']) {
+  streamed.streamMessage = { text: '', workflow: [] };
+  streamed.streamTextBuffer = ''; streamed.streamFlushHandle = 0;
+  if (scenario !== 'terminal-only') {
+    streamed.processStreamLine(JSON.stringify({ type:'stream_event',event:{type:'content_block_delta',delta:{type:'text_delta',text:'中文回复'}} }));
+    if (scenario === 'already-flushed') streamed.flushStreamText();
+  }
+  streamed.processStreamLine(JSON.stringify({type:'result',result:'中文回复',is_error:false}));
+  streamed.flushStreamText();
+  if (streamed.streamMessage.text !== '中文回复') throw new Error(`Terminal text duplication: ${scenario}`);
+}
+
 console.log(JSON.stringify({
   uiContract: 'PASS',
+  coalescedStreamTerminal: true,
   localPdfCard: true,
   localOfficeCard: true,
   bareAbsolutePath: true,
