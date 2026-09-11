@@ -42,6 +42,16 @@ foreach ($file in @('.gitignore','LICENSE','README.md','SECURITY.md','THIRD_PART
     Copy-PublicFile $file
 }
 Copy-PublicFile '.gitattributes'
+Copy-PublicFile 'docs\WINDOWS_SANDBOX_PLAN.md'
+# Evidence must be explicitly reviewed and sanitized before placing it here.
+$evidenceRoot = Join-Path $resolvedSource 'release-evidence'
+if (Test-Path -LiteralPath $evidenceRoot -PathType Container) {
+    Get-ChildItem -LiteralPath $evidenceRoot -Directory | Where-Object { $_.Name -match '^[0-9]+\.[0-9]+\.[0-9]+(\+[0-9A-Za-z.-]+)?$' } | ForEach-Object {
+        foreach ($name in @('readiness','soak','windows','native-performance','accessibility','security-review','regression')) {
+            Copy-PublicFile (Join-Path "release-evidence\$($_.Name)" "$name.json")
+        }
+    }
+}
 foreach ($file in @('install_pi_runtime.ps1','runtimes\pi\package.json','runtimes\pi\package-lock.json','docs\PI_AGENT.md')) { Copy-PublicFile $file }
 Copy-PublicFile 'build\dependencies.lock.json'
 Get-ChildItem -LiteralPath (Join-Path $resolvedSource 'third_party') -File | ForEach-Object {
