@@ -77,7 +77,9 @@ foreach($case in $cases){
     $clock=[Diagnostics.Stopwatch]::StartNew()
     $process=[Diagnostics.Process]::Start($start)
     $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
-    $timedOut=-not$process.WaitForExit($TestTimeoutSeconds*1000)
+    # Keep all 100 fault cycles: hosted Windows needs more than five minutes.
+    $caseTimeout=if($case.name-eq'native-agent-fault-stress'){[Math]::Max($TestTimeoutSeconds,900)}else{$TestTimeoutSeconds}
+    $timedOut=-not$process.WaitForExit($caseTimeout*1000)
     if($timedOut){$process.Kill($true);$process.WaitForExit()}
     [IO.File]::WriteAllText((Join-Path $caseRoot 'stdout.txt'),$stdout.GetAwaiter().GetResult())
     [IO.File]::WriteAllText((Join-Path $caseRoot 'stderr.txt'),$stderr.GetAwaiter().GetResult())

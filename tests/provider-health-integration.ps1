@@ -69,7 +69,9 @@ try {
     Save-Provider $connection 'auth-provider' 'Auth Provider' 'auth-model' $false
     Save-Provider $connection 'local-error-provider' 'Local Runtime Error' 'local-model' $false
     $localFailure=Run-Task $connection $root 'local-error-provider' 'local-model' 'local-permission-runtime-failure'
-    if($localFailure.Poll.status.failureClassification.kind-ne'local_runtime'-or$localFailure.Poll.status.fallbackDecision){throw 'Local runtime error was misclassified as Provider failure'}
+    if($localFailure.Poll.status.failureClassification.kind-ne'local_runtime'-or$localFailure.Poll.status.fallbackDecision){
+        throw ('Local runtime error was misclassified as Provider failure: ' + ($localFailure.Poll.status | Select-Object state,worker,harness,providerHealthRecorded,providerHealthSkipped,failureClassification | ConvertTo-Json -Depth 6 -Compress))
+    }
     $localHealth=Api $connection '/api/providers/health?providerId=local-error-provider'
     foreach($item in $localHealth){if($item.failureCount-gt 0){throw 'Local error polluted Provider health ledger'}}
 
@@ -129,6 +131,11 @@ try {
         HealthPersistedAfterRestart = $true; UnknownProviderBlocked = $true; HealthLedgerPollution = $false; TokenLeaked = $false; SchemaVersion = (Api $connection '/api/bootstrap').persistence.schemaVersion
         Workspace = $root
     } | Format-List
+}
+catch {
+    $logPath = Join-Path $root '.claude-gui-v2/native-runtime.log'
+    if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath -Tail 60 | Write-Output }
+    throw
 }
 finally {
     Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $Executable -or $_.ExecutablePath -eq $fake } |

@@ -86,7 +86,9 @@ try {
     $failedStatus = Get-Content -LiteralPath (Join-Path $root ".claude-gui-v2\runs\$($failed.jobId)\status.json") -Raw -Encoding UTF8 | ConvertFrom-Json
     $failedState = Get-Content -LiteralPath (Join-Path $root ".claude-gui-v2\runs\$($failed.jobId)\job-state.json") -Raw -Encoding UTF8 | ConvertFrom-Json
     if ($failedState.state -ne 'failed' -or $failedState.details.reconciledByHost -ne $true) { throw 'Failed Run was not finalized by the Host supervisor' }
-    if (-not $failedStatus.providerHealthRecorded -or $null -eq $failedStatus.fallbackDecision) { throw 'Background failure did not retain Provider evidence and fallback decision' }
+    if (-not $failedStatus.providerHealthRecorded -or $null -eq $failedStatus.fallbackDecision) {
+        throw ('Background failure did not retain Provider evidence and fallback decision: ' + ($failedStatus | Select-Object state,worker,harness,providerHealthRecorded,providerHealthSkipped,failureClassification | ConvertTo-Json -Depth 6 -Compress))
+    }
     $failureJson = $failedStatus | ConvertTo-Json -Depth 16 -Compress
     if ($failureJson.Contains('sk-provider-health-secret-value') -or $failureJson.Contains('background-secret')) { throw 'Background terminal evidence leaked a secret' }
     $metrics = Api $connection '/api/workbench/metrics'
@@ -98,6 +100,11 @@ try {
         FailedRun=$failed.jobId;FailedState=$failedState.state;RuntimeActiveJobs=[int]$failedConvergence.Runtime.activeJobs
         ProviderEvidence='persisted-redacted';RunMetrics="started=$($metrics.runs.started),completed=$($metrics.runs.completed),failed=$($metrics.runs.failed)";WorkbenchProcess=$connection.Runtime.pid;Workspace=$root
     } | Format-List
+}
+catch {
+    $logPath = Join-Path $root '.claude-gui-v2/native-runtime.log'
+    if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath -Tail 60 | Write-Output }
+    throw
 }
 finally {
     Stop-TestUi $root $Executable

@@ -10,8 +10,14 @@ $attachment = Join-Path $testRoot 'evidence-utf8.txt'
 [IO.File]::WriteAllText($attachment, ($chinesePrompt + ' Run Evidence offline integration.'), [Text.UTF8Encoding]::new($false))
 $process = $null
 $jobId = ''
+$fake = Join-Path $testRoot 'fake-claude.exe'
+$testDependencies = & (Join-Path $PSScriptRoot 'resolve-test-build-dependencies.ps1')
+& $testDependencies.Compiler /nologo /target:exe /platform:x64 "/out:$fake" "/reference:$($testDependencies.Json)" (Join-Path $PSScriptRoot 'fake-claude-worker.cs')
+if ($LASTEXITCODE -ne 0) { throw 'Fake Claude build failed' }
+Copy-Item -LiteralPath $testDependencies.Json -Destination (Join-Path $testRoot 'Newtonsoft.Json.dll')
+$env:CLAUDE_GUI_CLAUDE_EXE = $fake
 $env:CLAUDE_GUI_WORKSPACE = $testRoot
-$env:CLAUDE_GUI_ROOT = 'D:\softwares\ClaudeCode'
+$env:CLAUDE_GUI_ROOT = Join-Path $testRoot 'empty-install'
 $env:CLAUDE_GUI_TEST_MODE = '1'
 $env:CLAUDE_GUI_MUTEX_SCOPE = 'run-evidence-' + [guid]::NewGuid().ToString('N')
 try {
@@ -73,6 +79,7 @@ finally {
         try { Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:$($runtime.port)/api/chat/stop/$jobId" -Headers $headers -ContentType 'application/json' -Body '{}' | Out-Null } catch {}
     }
     if ($process -and -not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
-    Remove-Item Env:CLAUDE_GUI_WORKSPACE,Env:CLAUDE_GUI_ROOT,Env:CLAUDE_GUI_TEST_MODE,Env:CLAUDE_GUI_MUTEX_SCOPE -ErrorAction SilentlyContinue
+    Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $fake } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+    Remove-Item Env:CLAUDE_GUI_WORKSPACE,Env:CLAUDE_GUI_ROOT,Env:CLAUDE_GUI_CLAUDE_EXE,Env:CLAUDE_GUI_TEST_MODE,Env:CLAUDE_GUI_MUTEX_SCOPE -ErrorAction SilentlyContinue
     if ((Test-Path -LiteralPath $testRoot) -and $testRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { Remove-Item -LiteralPath $testRoot -Recurse -Force }
 }
