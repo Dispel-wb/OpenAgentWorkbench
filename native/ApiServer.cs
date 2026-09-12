@@ -1897,7 +1897,7 @@ namespace ClaudeCodeWorkbench
             return job.StartedAtUtc == default(DateTimeOffset) ? DateTimeOffset.UtcNow : job.StartedAtUtc;
         }
 
-        private static void RetireIdleWorker(Job job)
+        private void RetireIdleWorker(Job job)
         {
             if (job == null || job.IsActive) return;
             try
@@ -1907,12 +1907,39 @@ namespace ClaudeCodeWorkbench
                 {
                     int pid;
                     if (File.Exists(job.PidPath) && int.TryParse(File.ReadAllText(job.PidPath).Trim(), out pid) && ProcessAlive(pid))
-                        Process.Start(new ProcessStartInfo("taskkill.exe", "/PID " + pid + " /T /F") { UseShellExecute = false, CreateNoWindow = true }).WaitForExit(8000);
+                        using (var killer = Process.Start(new ProcessStartInfo("taskkill.exe", "/PID " + pid + " /T /F") { UseShellExecute = false, CreateNoWindow = true }))
+                            if (killer != null) killer.WaitForExit(8000);
                 }
             }
             catch (Exception error) { CrashLog.Handled("IdleWorkerRetire:" + job.Id, error); }
+            ReleaseJobResources(job);
+        }
+
+        private void ReleaseJobResources(Job job)
+        {
+            if (job == null) return;
+            var worker = job.Worker;
+            var process = job.Process;
             job.Worker = null;
             job.Process = null;
+            try
+            {
+                if (worker != null)
+                {
+                    worker.Retire(job.State);
+                    worker.Dispose();
+                }
+            }
+            catch (Exception error) { CrashLog.Handled("WorkerDispose:" + job.Id, error); }
+            try { if (process != null) process.Dispose(); } catch (Exception error) { CrashLog.Handled("WorkerProcessDispose:" + job.Id, error); }
+            // Chat runs can be reconstructed from their durable run directory on the
+            // next poll. Image results are memory-indexed, so keep their terminal
+            // entry available for poll/file requests after cancellation.
+            if (job.Kind == "chat")
+            {
+                Job ignored;
+                _jobs.TryRemove(job.Id, out ignored);
+            }
         }
 
         private static string WorkerReuseFingerprint(JObject payload, JObject provider, string model, string sourceWorkspace,
@@ -2067,6 +2094,7 @@ namespace ClaudeCodeWorkbench
             OpenAiAdapter.CancelRun(job.Id);
             NativeMetrics.RecordRunEnd(job.Id, state, durationMs);
             NotifyState();
+            if (!JobProcessAlive(job)) ReleaseJobResources(job);
             if (notifyBackground && _window != null && !IsScheduleRun(job))
             {
                 var title = state == JobStates.Completed ? "Claude Code 任务完成" : state == JobStates.Cancelled ? "Claude Code 任务已取消" : "Claude Code 任务失败";
@@ -2882,6 +2910,7 @@ namespace ClaudeCodeWorkbench
             OpenAiAdapter.CancelRun(job.Id);
             NativeMetrics.RecordRunEnd(job.Id, JobStates.Failed, job.ElapsedMilliseconds());
             NotifyState();
+            ReleaseJobResources(job);
             if (_window != null && !IsScheduleRun(job)) _window.ShowBackgroundNotification("Claude Code 任务失败", Limit(message, 220));
         }
 
@@ -3282,9 +3311,10 @@ namespace ClaudeCodeWorkbench
             return diff == 0;
         }
 
-        private static void StopJob(Job job)
+        private void StopJob(Job job)
         {
             var wasActive = job.IsActive;
+            var processId = job.Process == null ? 0 : job.Process.Id;
             try { if (job.Cancellation != null) job.Cancellation.Cancel(); } catch { }
             OpenAiAdapter.CancelRun(job.Id);
             if (job.Store != null && !string.IsNullOrWhiteSpace(job.Id))
@@ -3300,7 +3330,8 @@ namespace ClaudeCodeWorkbench
                 try
                 {
                     var pid = File.ReadAllText(job.PidPath).Trim();
-                    Process.Start(new ProcessStartInfo("taskkill.exe", "/PID " + pid + " /T /F") { UseShellExecute = false, CreateNoWindow = true }).WaitForExit(8000);
+                    using (var killer = Process.Start(new ProcessStartInfo("taskkill.exe", "/PID " + pid + " /T /F") { UseShellExecute = false, CreateNoWindow = true }))
+                        if (killer != null) killer.WaitForExit(8000);
                 }
                 catch { }
             }
@@ -3309,9 +3340,10 @@ namespace ClaudeCodeWorkbench
             job.Busy = false;
             job.State = JobStates.Cancelled;
             if (job.Runtime != null) job.Runtime.Transition(JobStates.Cancelled, "任务已由用户停止");
-            if (job.Store != null) job.Store.UpdateRunState(job.Id, JobStates.Cancelled, job.Process == null ? 0 : job.Process.Id, "{}");
+            if (job.Store != null) job.Store.UpdateRunState(job.Id, JobStates.Cancelled, processId, "{}");
             if (string.IsNullOrWhiteSpace(job.Error)) job.Error = "任务已由用户停止";
             if (wasActive) NativeMetrics.RecordRunEnd(job.Id, JobStates.Cancelled, job.ElapsedMilliseconds());
+            ReleaseJobResources(job);
         }
 
         public void Dispose() { Stop(true); }

@@ -1,10 +1,10 @@
 # Windows Sandbox 启用与验收方案
 
-状态：仅准备方案。尚未启用 Windows 功能、重启电脑或执行干净系统验收。
+状态：`Containers-DisposableClientVM` 功能已由管理员命令启用，系统返回需要重启。尚未重启，也未执行干净系统验收。
 
 ## 1. 主机启用（由用户执行）
 
-本机检查：Windows 11 Pro 25H2，约 31 GB 内存，虚拟化正在运行；未找到 Windows Sandbox 可执行文件，也没有 Hyper-V 管理模块或其他现成虚拟机工具。仍需由管理员核实可选功能状态。
+本机检查：Windows 11 Pro 25H2，约 31 GB 内存，虚拟化正在运行。功能启用命令已成功完成，但只有重启后才能验证 Windows Sandbox 是否可启动。
 
 先保存工作并安排重启时间。以管理员身份打开 PowerShell：
 

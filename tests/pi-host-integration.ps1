@@ -4,7 +4,12 @@ param(
     [string]$NodePath='',
     [switch]$KeepHost,
     [ValidateRange(0,168)][double]$SoakHours=0,
+    [ValidateRange(1,1000)][int]$CycleLimit=1,
     [ValidateRange(1,3600)][int]$CycleIntervalSeconds=300,
+    [ValidateRange(1,10000)][int]$MaxHandleGrowth=1500,
+    [ValidateRange(0,999)][int]$ResourceWarmupCycles=0,
+    [ValidateRange(1,10000)][int]$MaxPostWarmupHandleGrowth=10000,
+    [switch]$RecordResourceTrace,
     [string]$ProgressPath=''
 )
 $ErrorActionPreference='Stop'
@@ -12,6 +17,8 @@ $Executable=(Resolve-Path -LiteralPath $Executable).Path
 $PiEntry=(Resolve-Path -LiteralPath $PiEntry).Path
 $node=if($NodePath){(Resolve-Path -LiteralPath $NodePath).Path}else{(Get-Command node -ErrorAction Stop).Source}
 if($KeepHost-and$SoakHours-gt0){throw 'KeepHost is not allowed for a timed soak'}
+if($SoakHours-gt0-and$CycleLimit-ne1){throw 'CycleLimit is only available for untimed resource checks'}
+if($ResourceWarmupCycles-ge$CycleLimit-and$SoakHours-eq0){throw 'ResourceWarmupCycles must be lower than CycleLimit'}
 if($ProgressPath-and(Test-Path -LiteralPath $ProgressPath)){throw 'Use a new progress path; do not overwrite an earlier soak'}
 $root=Join-Path ([IO.Path]::GetTempPath()) ('pi-host-'+[guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($root)|Out-Null
@@ -23,7 +30,8 @@ $entryHash=(Get-FileHash -LiteralPath $PiEntry -Algorithm SHA256).Hash
 $nodeHash=(Get-FileHash -LiteralPath $node -Algorithm SHA256).Hash
 $soakStarted=[DateTimeOffset]::UtcNow
 $lastObservation=$soakStarted
-$activeSeconds=0.0;$cycles=0;$suspendGaps=0;$peakMemory=0L;$peakHandles=0;$initialHandles=0
+$activeSeconds=0.0;$cycles=0;$suspendGaps=0;$peakMemory=0L;$peakHandles=0;$currentMemory=0L;$currentHandles=0;$initialHandles=0;$postWarmupHandles=0;$postWarmupPeak=0
+$resourceTrace=[Collections.Generic.List[object]]::new()
 $mutexScope='pi-'+[guid]::NewGuid().ToString('N')
 $fixture=$null;$hostProcess=$null;$jobId='';$jobIds=@();$hostBase='';$headers=@{}
 function Post($route,$body){Invoke-RestMethod ($hostBase+$route) -Headers $headers -Method Post -ContentType 'application/json' -Body ([Text.Encoding]::UTF8.GetBytes(($body|ConvertTo-Json -Depth 20 -Compress))) -TimeoutSec 20}
@@ -34,7 +42,10 @@ function Save-PiSoak([string]$State,[string]$Failure=''){
         startedAt=$soakStarted.ToString('o');updatedAt=$now.ToString('o');completedAt=$(if($State-ne'running'){$now.ToString('o')}else{$null})
         requestedHours=$SoakHours;activeDurationSeconds=[Math]::Floor($activeSeconds);cycles=$cycles;turns=$cycles*2;cancellations=$cycles
         failures=$(if($State-eq'failed'){1}else{0});restarts=0;suspendGaps=$suspendGaps
-        peakPrivateMemoryMB=[Math]::Round($peakMemory/1MB,1);peakHandles=$peakHandles
+        peakPrivateMemoryMB=[Math]::Round($peakMemory/1MB,1);peakHandles=$peakHandles;initialHandles=$initialHandles;handleGrowth=[Math]::Max(0,$peakHandles-$initialHandles)
+        currentPrivateMemoryMB=[Math]::Round($currentMemory/1MB,1);currentHandles=$currentHandles
+        resourceWarmupCycles=$ResourceWarmupCycles;postWarmupHandles=$postWarmupHandles;postWarmupPeakHandles=$postWarmupPeak;postWarmupHandleGrowth=$(if($postWarmupHandles-gt0){[Math]::Max(0,$postWarmupPeak-$postWarmupHandles)}else{0})
+        resourceTrace=$(if($RecordResourceTrace){@($resourceTrace)}else{$null})
         monitorPid=$PID;monitorStartedAt=[Diagnostics.Process]::GetCurrentProcess().StartTime.ToUniversalTime().ToString('o');hostPid=$(if($hostProcess){$hostProcess.Id}else{0});workspace=$root;mutexScope=$mutexScope;message=$Failure
         workload='Same Host; real Pi readonly chat, two-turn resume, permission rejection and process-tree cancellation; local deterministic model, no paid provider'
     }
@@ -53,9 +64,14 @@ function Observe-PiSoak {
     $health=Invoke-RestMethod "$hostBase/api/workbench/health" -Headers $headers -TimeoutSec 10
     $bootstrap=Invoke-RestMethod "$hostBase/api/bootstrap" -Headers $headers -TimeoutSec 10
     if(-not$health.durableJobState-or$bootstrap.persistence.integrity-ne'ok'){throw 'Pi soak SQLite/health invariant failed'}
-    $script:peakMemory=[Math]::Max($peakMemory,$hostProcess.PrivateMemorySize64)
-    $script:peakHandles=[Math]::Max($peakHandles,$hostProcess.HandleCount)
-    if($hostProcess.PrivateMemorySize64-gt900MB-or($hostProcess.HandleCount-$initialHandles)-gt1500){throw 'Pi soak exceeded memory/handle bounds'}
+    $script:currentMemory=$hostProcess.PrivateMemorySize64
+    $script:currentHandles=$hostProcess.HandleCount
+    $script:peakMemory=[Math]::Max($peakMemory,$currentMemory)
+    $script:peakHandles=[Math]::Max($peakHandles,$currentHandles)
+    if($RecordResourceTrace){$resourceTrace.Add([pscustomobject]@{cycle=$cycles;activeSeconds=[Math]::Floor($activeSeconds);privateMemoryMB=[Math]::Round($currentMemory/1MB,1);handles=$currentHandles})}
+    if($currentMemory-gt900MB-or($currentHandles-$initialHandles)-gt$MaxHandleGrowth){throw 'Pi soak exceeded memory/handle bounds'}
+    if($ResourceWarmupCycles-gt0-and$cycles-eq$ResourceWarmupCycles-and$postWarmupHandles-eq0){$script:postWarmupHandles=$hostProcess.HandleCount;$script:postWarmupPeak=$hostProcess.HandleCount}
+    elseif($postWarmupHandles-gt0-and$cycles-gt$ResourceWarmupCycles){$script:postWarmupPeak=[Math]::Max($postWarmupPeak,$hostProcess.HandleCount);if(($postWarmupPeak-$postWarmupHandles)-gt$MaxPostWarmupHandleGrowth){throw 'Pi Host handles did not plateau after warmup'}}
     Save-PiSoak 'running'
 }
 function Assert-PiSoakArtifacts {
@@ -89,6 +105,8 @@ try {
     Post '/api/providers' $provider|Out-Null
     Post '/api/settings' @{workspace=$root;workerHarness='pi';permissionMode='readonly';providerId='pi-fixture';model='fixture-model'}|Out-Null
     $initialHandles=$hostProcess.HandleCount
+    $currentHandles=$initialHandles
+    $currentMemory=$hostProcess.PrivateMemorySize64
     $lastObservation=[DateTimeOffset]::UtcNow
     Save-PiSoak 'running'
     do {
@@ -122,10 +140,14 @@ try {
     $jobId=$chat.jobId;$jobIds+=$jobId;$deadline=(Get-Date).AddSeconds(15)
     do{Start-Sleep -Milliseconds 150;$last=Get-Content -LiteralPath ($portFile+'.request.json') -Raw}while($last-notmatch'PI_HOST_HANG'-and(Get-Date)-lt$deadline)
     if($last-notmatch'PI_HOST_HANG'){throw 'Pi hanging fixture never reached API'}
-    $processes=@(Get-CimInstance Win32_Process)
-    $bridge=$processes|Where-Object{$_.CommandLine-match'--agent-worker-bridge'-and$_.CommandLine-like('*'+$jobId+'*')}|Select-Object -First 1
+    $bridge=$null;$children=@();$deadline=(Get-Date).AddSeconds(10)
+    do {
+        $processes=@(Get-CimInstance Win32_Process)
+        $bridge=$processes|Where-Object{$_.CommandLine-match'--agent-worker-bridge'-and$_.CommandLine-like('*'+$jobId+'*')}|Select-Object -First 1
+        if($bridge){$children=@($processes|Where-Object ParentProcessId -eq $bridge.ProcessId)}
+        if(-not$bridge-or$children.Count-eq 0){Start-Sleep -Milliseconds 100}
+    } while((-not$bridge-or$children.Count-eq 0)-and(Get-Date)-lt$deadline)
     if(-not$bridge){throw 'Pi bridge process not found before cancellation'}
-    $children=@($processes|Where-Object ParentProcessId -eq $bridge.ProcessId)
     if($children.Count-eq 0){throw 'Pi core process not found before cancellation'}
     Post "/api/chat/stop/$jobId" @{}|Out-Null
     Start-Sleep -Milliseconds 700
@@ -138,10 +160,10 @@ try {
             Observe-PiSoak
         }
     }
-    } while($SoakHours-gt0-and$activeSeconds-lt$SoakHours*3600)
+    } while(($SoakHours-gt0-and$activeSeconds-lt$SoakHours*3600)-or($SoakHours-eq0-and$cycles-lt$CycleLimit))
     Assert-PiSoakArtifacts
     Save-PiSoak 'passed'
-    [pscustomobject]@{PiHost='PASS';Turns=$cycles*2;Cycles=$cycles;RequestedHours=$SoakHours;ActiveSeconds=[Math]::Floor($activeSeconds);PermissionDenials=$denials;NativeResume=$true;ProcessTreeStop=$true;Root=$root;HostBase=$hostBase;ProgressPath=$ProgressPath}|Format-List
+    [pscustomobject]@{PiHost='PASS';Turns=$cycles*2;Cycles=$cycles;RequestedHours=$SoakHours;RequestedCycles=$CycleLimit;ActiveSeconds=[Math]::Floor($activeSeconds);PermissionDenials=$denials;NativeResume=$true;ProcessTreeStop=$true;InitialHandles=$initialHandles;PeakHandles=$peakHandles;CurrentHandles=$currentHandles;HandleGrowth=[Math]::Max(0,$peakHandles-$initialHandles);PostWarmupHandles=$postWarmupHandles;PostWarmupPeakHandles=$postWarmupPeak;PostWarmupHandleGrowth=$(if($postWarmupHandles-gt0){[Math]::Max(0,$postWarmupPeak-$postWarmupHandles)}else{0});Root=$root;HostBase=$hostBase;ProgressPath=$ProgressPath}|Format-List
     if($KeepHost){$hostProcess=$null;$fixture=$null}
 } catch {
     $failure=$_

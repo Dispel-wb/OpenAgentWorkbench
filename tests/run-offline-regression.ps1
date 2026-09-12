@@ -43,6 +43,10 @@ foreach($name in @('release-ci-gate-selftest','release-signature-policy-selftest
 Add-Case 'agent-worker-sdk-integration' 'agent-worker-sdk-integration.ps1' @('-DependencyRoot',$DependencyRoot)
 Add-Case 'terminal-poll-race-selftest' 'terminal-poll-race-selftest.ps1'
 Add-Case 'pi-host-integration' 'pi-host-integration.ps1' @('-PiEntry',(Join-Path $source 'runtimes/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js'))
+Add-Case 'pi-host-resource-stability' 'pi-host-integration.ps1' @(
+    '-PiEntry',(Join-Path $source 'runtimes/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js'),
+    '-CycleLimit','60','-ResourceWarmupCycles','20','-MaxHandleGrowth','1000','-MaxPostWarmupHandleGrowth','100'
+)
 Add-Case 'edition-smoke' 'edition-smoke.ps1' @('-ExpectedEdition','opensource','-NodePath',$node)
 foreach($fault in @('','oversize','flood','byte-flood','malformed','eof')){
     $argsForCase=@('-NodePath',$node)
@@ -84,7 +88,7 @@ foreach($case in $cases){
     $process=[Diagnostics.Process]::Start($start)
     $stdout=$process.StandardOutput.ReadToEndAsync();$stderr=$process.StandardError.ReadToEndAsync()
     # Keep all 100 fault cycles: hosted Windows needs more than five minutes.
-    $caseTimeout=if($case.name-eq'native-agent-fault-stress'){[Math]::Max($TestTimeoutSeconds,900)}else{$TestTimeoutSeconds}
+    $caseTimeout=if($case.name-eq'native-agent-fault-stress'){[Math]::Max($TestTimeoutSeconds,900)}elseif($case.name-eq'pi-host-resource-stability'){[Math]::Max($TestTimeoutSeconds,600)}else{$TestTimeoutSeconds}
     $timedOut=-not$process.WaitForExit($caseTimeout*1000)
     if($timedOut){$process.Kill($true);$process.WaitForExit()}
     [IO.File]::WriteAllText((Join-Path $caseRoot 'stdout.txt'),$stdout.GetAwaiter().GetResult())

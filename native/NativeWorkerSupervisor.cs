@@ -775,6 +775,12 @@ namespace ClaudeCodeWorkbench
         {
             if (_disposed) return;
             Stop();
+            try
+            {
+                var tasks = new[] { _outputTask, _errorTask, _inputTask, _heartbeatTask }.Where(task => task != null).ToArray();
+                if (tasks.Length > 0) Task.WaitAll(tasks, 1200);
+            }
+            catch { }
             _disposed = true;
             try { if (_jobObject != null) _jobObject.Dispose(); } catch { }
             try { if (Process != null) Process.Dispose(); } catch { }
