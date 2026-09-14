@@ -70,7 +70,20 @@ internal static class FakeClaudeWorker
                 }
                 if (text.Contains("中断恢复")) System.Threading.Thread.Sleep(1200);
                 if (text.Contains("run-center-slow")) System.Threading.Thread.Sleep(15000);
-                if (text.Contains("fault-recovery")) System.Threading.Thread.Sleep(300);
+                if (text.Contains("fault-recovery"))
+                {
+                    var gate = Environment.GetEnvironmentVariable("CLAUDE_GUI_FAULT_GATE_FILE");
+                    if (string.IsNullOrWhiteSpace(gate)) System.Threading.Thread.Sleep(300);
+                    else
+                    {
+                        var deadline = DateTime.UtcNow.AddSeconds(60);
+                        while (File.Exists(gate))
+                        {
+                            if (DateTime.UtcNow >= deadline) throw new TimeoutException("Fault fixture gate was not released");
+                            System.Threading.Thread.Sleep(10);
+                        }
+                    }
+                }
                 if (text.Contains("provider-rate-limit"))
                 {
                     output.WriteLine(new JObject
@@ -87,6 +100,12 @@ internal static class FakeClaudeWorker
                         ["type"] = "result", ["is_error"] = true,
                         ["result"] = "401 invalid API key sk-provider-health-secret-value"
                     }.ToString(Newtonsoft.Json.Formatting.None));
+                    continue;
+                }
+                if (text.Contains("local-permission-runtime-failure"))
+                {
+                    output.WriteLine(new JObject { ["type"] = "result", ["is_error"] = true,
+                        ["result"] = "Error: MCP tool mcp__gui_permissions__approval_prompt (passed via --permission-prompt-tool) not found. Available MCP tools: none" }.ToString(Newtonsoft.Json.Formatting.None));
                     continue;
                 }
                 if (text.Contains("compaction-event"))

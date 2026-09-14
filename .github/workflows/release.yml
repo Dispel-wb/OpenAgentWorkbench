@@ -11,6 +11,7 @@ on:
 
 permissions:
   contents: write
+  checks: read
 
 jobs:
   release:
@@ -38,6 +39,11 @@ jobs:
           $declared = [regex]::Match($edition, 'ContractVersion\s*=\s*"([^"]+)"').Groups[1].Value
           if ($version -ne $declared) { throw "Release label $version does not match source version $declared" }
           "version=$version" >> $env:GITHUB_OUTPUT
+      - name: Verify actual CI for this exact commit
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: .\tests\require-release-ci.ps1 -Repository $env:GITHUB_REPOSITORY -Commit $env:GITHUB_SHA
       - name: Build and gate
         shell: pwsh
         run: |
@@ -49,6 +55,11 @@ jobs:
           .\tests\reproducible-build.ps1 -Edition OpenSource -DependencyRoot .\.packages -PythonPath $python -ReportPath .\dist\release\reproducible-build.json
           .\tests\edition-smoke.ps1 -Executable .\dist\release\OpenAgentWorkbench.exe -ExpectedEdition opensource -NodePath $node
           .\tests\release-security-audit.ps1 -Root . -Executable .\dist\release\OpenAgentWorkbench.exe -ReportPath .\dist\release\security-audit.json
+      - name: Require stable release evidence for the exact binary
+        shell: pwsh
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: .\tests\require-v1-readiness.ps1 -Version $env:RELEASE_VERSION -Executable .\dist\release\OpenAgentWorkbench.exe -EvidenceDirectory ".\release-evidence\$env:RELEASE_VERSION"
       - name: Package release
         shell: pwsh
         env:
@@ -60,9 +71,14 @@ jobs:
           Copy-Item -LiteralPath .\dist\release\OpenAgentWorkbench.exe -Destination $stage
           Copy-Item -LiteralPath .\README.md,.\LICENSE,.\SECURITY.md,.\THIRD_PARTY_NOTICES.md -Destination $stage
           Copy-Item -LiteralPath .\third_party,.\docs -Destination $stage -Recurse
+          $evidence = ".\release-evidence\$version"
+          if (Test-Path -LiteralPath $evidence) { Copy-Item -LiteralPath $evidence -Destination "$stage\release-evidence" -Recurse }
           Copy-Item -LiteralPath .\install_dsh_runtime.ps1 -Destination $stage
           New-Item -ItemType Directory -Path "$stage\runtimes\dsh" -Force | Out-Null
           Copy-Item -LiteralPath .\runtimes\dsh\package.json,.\runtimes\dsh\package-lock.json -Destination "$stage\runtimes\dsh"
+          Copy-Item -LiteralPath .\install_pi_runtime.ps1 -Destination $stage
+          New-Item -ItemType Directory -Path "$stage\runtimes\pi" -Force | Out-Null
+          Copy-Item -LiteralPath .\runtimes\pi\package.json,.\runtimes\pi\package-lock.json -Destination "$stage\runtimes\pi"
           Compress-Archive -LiteralPath $stage -DestinationPath "$stage.zip" -CompressionLevel Optimal
           Get-FileHash "$stage.zip",.\dist\release\OpenAgentWorkbench.exe -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $([IO.Path]::GetFileName($_.Path))" } | Set-Content .\dist\release\SHA256SUMS.txt -Encoding utf8
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4

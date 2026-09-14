@@ -4,6 +4,8 @@ Open Agent Workbench 是一个面向 Windows 10/11 的中文 Agent 桌面工作�
 
 > 当前公开版本是 **Preview**，用于代码审阅、试用和收集兼容性反馈，不代表正式版 1.0.0。程序尚未进行商业代码签名，请只从本仓库的 Releases 下载并核对 SHA-256。
 
+候选分支正在验证带 1.0.0 元数据的未发布构建，以固定长期测试的 EXE 摘要。它尚未完成正式版验收；请查看[最新验收进展](docs/V1_RELEASE_READINESS.md)，不要把版本字段视作通过证据。
+
 ## 已具备的核心能力
 
 - UI 与后台任务生命周期分离：关闭窗口后 Host 和任务可以继续运行，由系统托盘控制。
@@ -18,9 +20,11 @@ Open Agent Workbench 是一个面向 Windows 10/11 的中文 Agent 桌面工作�
 
 - 仅提供 Windows x64 构建；需要 Microsoft Edge WebView2 Runtime。
 - 发布的 EXE 未签名，Windows 可能显示未知发布者提示。
-- Office/PDF 当前以原生文件卡片和系统默认应用打开为主，并非完整的内嵌文档编辑器。
+- PDF 支持内嵌只读预览；DOCX/XLSX/PPTX 支持简化只读预览，DOCX/PPTX 可显示包内 PNG/JPEG。复杂图表、精确分页和文档编辑仍需系统应用。
 - 服务商兼容性依赖其 OpenAI/Anthropic 兼容程度；不同中转服务的流式字段仍可能需要适配。
 - 尚未完成正式版要求的 72 小时稳定性验证、干净 Windows 矩阵和证书签名流程。
+
+逐项差距、验收条件与最新修复见 [成熟度清单](docs/MATURITY_GAPS.md) 和 [验证状态](docs/VALIDATION_STATUS.md)。
 
 ## 从源代码构建
 

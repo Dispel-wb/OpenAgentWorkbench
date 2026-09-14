@@ -44,9 +44,9 @@ function Run-Task($Connection, [string]$Root, [string]$ProviderId, [string]$Mode
 $root = Join-Path ([IO.Path]::GetTempPath()) ('claude-provider-health-' + [guid]::NewGuid().ToString('N'))
 [IO.Directory]::CreateDirectory($root) | Out-Null
 $fake = Join-Path $root 'fake-claude.exe'
-$vsRoot = 'C:\Program Files\Microsoft Visual Studio\2022\Community'
-$csc = Join-Path $vsRoot 'MSBuild\Current\Bin\Roslyn\csc.exe'
-$json = Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\NuGet\Newtonsoft.Json.dll'
+$testDependencies = & (Join-Path $PSScriptRoot 'resolve-test-build-dependencies.ps1')
+$csc = $testDependencies.Compiler
+$json = $testDependencies.Json
 & $csc /nologo /target:exe /platform:x64 "/out:$fake" "/reference:$json" (Join-Path $PSScriptRoot 'fake-claude-worker.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Fake Claude build failed' }
 Copy-Item -LiteralPath $json -Destination (Join-Path $root 'Newtonsoft.Json.dll')
@@ -67,6 +67,13 @@ try {
     Save-Provider $connection 'healthy-provider' 'Healthy Provider' 'healthy-vision-model' $true
     Save-Provider $connection 'cooling-provider' 'Cooling Provider' 'cooling-model' $false
     Save-Provider $connection 'auth-provider' 'Auth Provider' 'auth-model' $false
+    Save-Provider $connection 'local-error-provider' 'Local Runtime Error' 'local-model' $false
+    $localFailure=Run-Task $connection $root 'local-error-provider' 'local-model' 'local-permission-runtime-failure'
+    if($localFailure.Poll.status.failureClassification.kind-ne'local_runtime'-or$localFailure.Poll.status.fallbackDecision){
+        throw ('Local runtime error was misclassified as Provider failure: ' + ($localFailure.Poll.status | Select-Object state,worker,harness,providerHealthRecorded,providerHealthSkipped,failureClassification | ConvertTo-Json -Depth 6 -Compress))
+    }
+    $localHealth=Api $connection '/api/providers/health?providerId=local-error-provider'
+    foreach($item in $localHealth){if($item.failureCount-gt 0){throw 'Local error polluted Provider health ledger'}}
 
     foreach ($unknownProbe in @(
         @{ path='/api/providers/discover'; body=@{providerId='missing-provider';baseUrl='http://127.0.0.1:9';authStyle='auto'} },
@@ -124,6 +131,11 @@ try {
         HealthPersistedAfterRestart = $true; UnknownProviderBlocked = $true; HealthLedgerPollution = $false; TokenLeaked = $false; SchemaVersion = (Api $connection '/api/bootstrap').persistence.schemaVersion
         Workspace = $root
     } | Format-List
+}
+catch {
+    $logPath = Join-Path $root '.claude-gui-v2/native-runtime.log'
+    if (Test-Path -LiteralPath $logPath) { Get-Content -LiteralPath $logPath -Tail 60 | Write-Output }
+    throw
 }
 finally {
     Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $Executable -or $_.ExecutablePath -eq $fake } |

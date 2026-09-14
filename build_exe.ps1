@@ -9,7 +9,17 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$python = if ($PythonPath) { $PythonPath } elseif (Test-Path -LiteralPath (Join-Path $root '.venv\Scripts\python.exe')) { Join-Path $root '.venv\Scripts\python.exe' } else { (Get-Command python -ErrorAction Stop).Source }
+function Test-Python([string]$Candidate) {
+    if (-not $Candidate -or -not (Test-Path -LiteralPath $Candidate -PathType Leaf)) { return $false }
+    try { & $Candidate -c 'import sys; raise SystemExit(0)' *> $null; return $LASTEXITCODE -eq 0 } catch { return $false }
+}
+if ($PythonPath) {
+    $python = [IO.Path]::GetFullPath($PythonPath)
+    if (-not (Test-Python $python)) { throw "Configured Python is not runnable: $python" }
+} else {
+    $python = @((Join-Path $root '.venv\Scripts\python.exe'), (Get-Command python -ErrorAction SilentlyContinue).Source) | Where-Object { Test-Python $_ } | Select-Object -First 1
+    if (-not $python) { throw 'No runnable Python interpreter was found. Pass -PythonPath.' }
+}
 $isOpenSource = $Edition -eq 'OpenSource'
 $build = Join-Path $root 'build'
 $asset = Join-Path $root 'static\assets\mascot.png'
@@ -62,6 +72,7 @@ $arguments = @(
     '/reference:System.dll', '/reference:System.Core.dll', '/reference:System.Drawing.dll',
     '/reference:System.Windows.Forms.dll', '/reference:System.Net.Http.dll', '/reference:System.Security.dll',
     '/reference:System.IO.Compression.dll', '/reference:System.IO.Compression.FileSystem.dll',
+    '/reference:System.Xml.dll', '/reference:System.Xml.Linq.dll',
     "/reference:$newtonsoft", "/reference:$webviewCore", "/reference:$webviewForms",
     "/resource:$newtonsoft,deps.Newtonsoft.Json.dll",
     "/resource:$webviewCore,deps.Microsoft.Web.WebView2.Core.dll",
@@ -75,6 +86,8 @@ $resources = [ordered]@{
     (Join-Path $root 'static\app.js') = 'static.app.js'
     (Join-Path $root 'static\styles.css') = 'static.styles.css'
     (Join-Path $root 'static\modules\ui-store.js') = 'static.modules.ui-store.js'
+    (Join-Path $root 'static\modules\document-ui.js') = 'static.modules.document-ui.js'
+    (Join-Path $root 'static\modules\workflow-ui.js') = 'static.modules.workflow-ui.js'
     (Join-Path $root 'static\modules\provider-catalog.js') = 'static.modules.provider-catalog.js'
     (Join-Path $root 'static\vendor\vue.global.prod.js') = 'static.vendor.vue.global.prod.js'
     (Join-Path $root 'static\vendor\xterm.js') = 'static.vendor.xterm.js'

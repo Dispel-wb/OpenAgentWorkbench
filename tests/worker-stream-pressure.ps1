@@ -9,9 +9,9 @@ $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
 if (-not $testRoot.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unsafe test root' }
 [IO.Directory]::CreateDirectory($testRoot) | Out-Null
 $fake = Join-Path $testRoot 'fake-claude.exe'
-$vsRoot = 'C:\Program Files\Microsoft Visual Studio\2022\Community'
-$csc = Join-Path $vsRoot 'MSBuild\Current\Bin\Roslyn\csc.exe'
-$json = Join-Path $vsRoot 'Common7\IDE\CommonExtensions\Microsoft\NuGet\Newtonsoft.Json.dll'
+$testDependencies = & (Join-Path $PSScriptRoot 'resolve-test-build-dependencies.ps1')
+$csc = $testDependencies.Compiler
+$json = $testDependencies.Json
 & $csc /nologo /target:exe /platform:x64 "/out:$fake" "/reference:$json" (Join-Path $PSScriptRoot 'fake-claude-worker.cs')
 if ($LASTEXITCODE -ne 0) { throw 'Fake Claude build failed' }
 Copy-Item -LiteralPath $json -Destination (Join-Path $testRoot 'Newtonsoft.Json.dll')

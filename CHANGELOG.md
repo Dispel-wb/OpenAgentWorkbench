@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased — 1.0.0 readiness work
+
+- Fixed recursive workspace snapshots by excluding `.claude-gui-v2` and `.git` at every depth during snapshot, change detection and rollback; stale nested run snapshots can no longer recursively copy Workbench state into themselves.
+- Expanded Pi 0.85.1 on Windows: read/plan now expose workspace-scoped read/search/list tools, edit/agent expose workspace-scoped file edits, scoped mode honors its file-tool allowlist, and Full uses Pi's actual `powershell` tool instead of the unavailable `bash` name.
+- Added a fail-closed Pi policy extension that canonicalizes file paths, blocks access outside the selected workspace and protects `.git`/`.claude-gui-v2` writes. PowerShell remains Full-only because this policy is not an OS sandbox.
+- Fixed build bootstrap so a stale, non-runnable `.venv` launcher is rejected instead of being selected merely because the file exists.
+- Made atomic JSON persistence use collision-free temporary files with bounded contention retries, preventing concurrent Host/Worker status writers from turning an already durable success into a sharing-violation failure.
+- Verified the current unsigned OpenSource bytes with a fresh 70/70 offline regression and same-environment reproducible build. This does not satisfy the new 72-hour or clean-Windows requirements.
+- Candidate binaries now carry 1.0.0 metadata so the exact intended release bytes can undergo long-term testing. This is an unreleased candidate, not a completed certification or published stable release.
+- Fixed duplicate rendering when a buffered streaming delta and terminal result arrive in the same poll; verified the old failure and corrected behavior in native WebView2.
+- Fixed terminal polling returning stale metadata when background reconciliation wins the finalization race; a controlled two-case regression reproduces the old failure without relying on timing luck.
+- Added an isolated 70-case offline regression runner with binary/script hashes and retained per-case logs; corrected stale Local-edition assumptions, explicit UTF-8 decoding, inherited provider defaults and missing offline CLI/fallback fixtures. All 100 fault cycles retain their assertions with a separate hosted-runner time budget.
+- Added timed same-Host Pi workload validation with repeated two-turn conversations, permission rejection, process-tree cancellation, SQLite/health checks and active-time accounting that excludes long suspension gaps.
+- Fixed cancelled and retired native Workers retaining process resources. A 60-cycle gate now verifies that Host handles plateau after warm-up; the old candidate continued to grow while the corrected candidate stayed within the bound.
+- Preserved cancelled image jobs in the in-memory result index after resource cleanup so image poll/file requests keep their terminal contract.
+
+- Added the optional, locked Pi 0.85.1 native RPC adapter with explicit permission limits, persisted sessions, process-tree cancellation and genuine loopback-model tests.
+- Fixed fresh-start workspace precedence so the UI does not replace the Host's C-drive or Unicode workspace with a hard-coded D-drive default.
+- Added a shared raw-frame retention budget for DSHarness, covering both the mailbox and pre-acknowledgement notifications.
+- Extended CI to restore and test the actual Pi runtime and reject workspace/bootstrap and aggregate-buffer regressions.
+- Signing is an explicitly accepted exemption for the requested 1.0.0; all other readiness claims still require evidence. No stable version is declared by this entry.
+
 ## 0.7.0-preview.1 — unreleased candidate
 
 - 增加真正的 Codex CLI exec/resume 和 DSHarness CLI SDK 核心，独立于 Claude Code 安装。

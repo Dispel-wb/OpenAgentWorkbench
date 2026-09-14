@@ -31,6 +31,9 @@ jobs:
         run: |
           $python = (Get-Command python).Source
           .\build_exe.ps1 -Edition OpenSource -DependencyRoot .\.packages -PythonPath $python -OutputPath .\dist\ci\OpenAgentWorkbench.exe
+      - name: Restore locked Pi runtime
+        shell: pwsh
+        run: .\install_pi_runtime.ps1
       - name: Verify reproducible build
         shell: pwsh
         run: |
@@ -43,13 +46,34 @@ jobs:
           $node = (Get-Command node).Source
           .\tests\webview-runtime-selftest.ps1 -DependencyRoot .\.packages
           .\tests\agent-worker-sdk-integration.ps1 -Executable $exe -DependencyRoot .\.packages
+          node .\tests\pi-worker-sdk-integration.js $exe
+          if ($LASTEXITCODE -ne 0) { throw 'Pi genuine runtime regression failed' }
+          .\tests\pi-host-integration.ps1 -Executable $exe
           .\tests\dsh-worker-sdk-integration.ps1 -Executable $exe -NodePath $node
+          .\tests\sdk-frame-reader-selftest.ps1 -DependencyRoot .\.packages
+          .\tests\release-signature-policy-selftest.ps1
+          .\tests\release-ci-gate-selftest.ps1
+          .\tests\v1-readiness-selftest.ps1
+          .\tests\host-startup-failure-selftest.ps1 -Executable $exe
+          foreach ($fault in @('oversize','flood','byte-flood','malformed','eof')) {
+            .\tests\dsh-worker-sdk-integration.ps1 -Executable $exe -NodePath $node -Fault $fault
+          }
           .\tests\event-store-selftest.ps1 -Executable $exe
           .\tests\task-security-selftest.ps1 -Executable $exe
           .\tests\skill-catalog-selftest.ps1 -Executable $exe
           .\tests\native-diagnostics-selftest.ps1 -Executable $exe
           node .\tests\ui-contract-selftest.js
+          if ($LASTEXITCODE -ne 0) { throw 'UI contract failed' }
+          node .\tests\ui-connection-state-selftest.js
+          if ($LASTEXITCODE -ne 0) { throw 'UI connection state failed' }
+          node .\tests\bootstrap-workspace-selftest.js
+          if ($LASTEXITCODE -ne 0) { throw 'Workspace bootstrap failed' }
+          node .\tests\public-doc-links-selftest.js
+          if ($LASTEXITCODE -ne 0) { throw 'Public documentation links failed' }
           .\tests\edition-smoke.ps1 -Executable $exe -ExpectedEdition opensource -NodePath $node
+      - name: Full isolated offline regression
+        shell: pwsh
+        run: .\tests\run-offline-regression.ps1 -Executable .\dist\ci\OpenAgentWorkbench.exe -OutputDirectory .\dist\ci\offline-regression -DependencyRoot .\.packages
       - name: Security release gate
         shell: pwsh
         run: .\tests\release-security-audit.ps1 -Root . -Executable .\dist\ci\OpenAgentWorkbench.exe -ReportPath .\dist\ci\security-audit.json
@@ -60,10 +84,12 @@ jobs:
           path: |
             dist/ci/OpenAgentWorkbench.exe
             dist/ci/*.json
+            dist/ci/offline-regression/regression.json
+            dist/ci/offline-regression/*/stdout.txt
+            dist/ci/offline-regression/*/stderr.txt
           if-no-files-found: error
 
   dependency-review:
-    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -73,3 +99,5 @@ jobs:
       - uses: actions/dependency-review-action@2031cfc080254a8a887f58cffee85186f0e49e48 # v4
         with:
           fail-on-severity: high
+          base-ref: ${{ github.event.pull_request.base.sha || github.event.before || format('{0}^', github.sha) }}
+          head-ref: ${{ github.event.pull_request.head.sha || github.sha }}

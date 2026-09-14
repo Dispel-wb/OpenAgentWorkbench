@@ -1,0 +1,24 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const readline = require('node:readline');
+const emit = value => process.stdout.write(JSON.stringify(value) + '\n');
+const session = path.join(process.env.PI_CODING_AGENT_DIR, 'fixture-session.jsonl');
+fs.writeFileSync(session, 'fixture');
+readline.createInterface({ input: process.stdin }).on('line', line => {
+  const command = JSON.parse(line);
+  if (command.type === 'get_state') return emit({ type: 'response', id: command.id, success: true, data: { sessionFile: session, sessionId: 'fixture' } });
+  const name = command.message;
+  if (name === 'reject') return emit({ type: 'response', id: command.id, success: false, error: 'fixture rejected' });
+  emit({ type: 'response', id: command.id, success: true });
+  if (name === 'malformed') return process.stdout.write('{bad\n');
+  if (name === 'oversize') return process.stdout.write('x'.repeat(8 * 1024 * 1024 + 1) + '\n');
+  if (name === 'no-terminal') return process.exit(0);
+  if (name === 'approval') return emit({ type: 'extension_ui_request', method: 'confirm', id: 'ask' });
+  if (name === 'hang') return;
+  if (name === 'readonly-tool') return emit({ type: 'tool_execution_start', toolCallId: 't1', toolName: 'write', args: {} });
+  emit({ type: 'turn_start' });
+  emit({ type: 'message_update', assistantMessageEvent: { type: 'text_delta', delta: '中文\u2028流式' } });
+  emit({ type: 'message_end', message: { role: 'assistant', content: [{ type: 'text', text: '中文\u2028流式' }], usage: { input: 11, output: 7, cacheRead: 3, cacheWrite: 2 }, stopReason: name === 'model-error' ? 'error' : 'stop', errorMessage: 'fixture model error' } });
+  emit({ type: 'agent_end', willRetry: true });
+  setTimeout(() => emit({ type: 'agent_settled' }), 180);
+});

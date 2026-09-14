@@ -96,7 +96,44 @@ async function main() {
     if (selectionActions.join('|') !== '复制|引用|导出 TXT') throw new Error('Selection actions changed under virtualization');
 
     await page.screenshot({ path: path.join(outputDir, 'long-session-ui.png') });
-    process.stdout.write(JSON.stringify({ longSessionUi: 'PASS', totalMessages: messages.length, totalCharacters: messages.reduce((sum, message) => sum + message.text.length, 0), initialRenderMs, expandMs, initial, shifted, selectionActions }, null, 2));
+    await page.keyboard.press('Escape');
+    await page.evaluate(()=>document.querySelector('.history-window-control.newer button').click());
+    await last.waitFor({state:'visible'});
+    await last.getByRole('button',{name:'显示完整内容'}).click();
+    const fullRenderedCharacters=(await last.locator('.message-body').innerText()).length;
+    if(fullRenderedCharacters<100000)throw new Error('FPS benchmark must include a fully rendered 100k-character message');
+    const cdp=await context.newCDPSession(page);
+    await cdp.send('Performance.enable');
+    const metric=async()=>{const {metrics}=await cdp.send('Performance.getMetrics');return Object.fromEntries(metrics.map(m=>[m.name,m.value]));};
+    const memoryBefore=await metric();
+    const frames=await page.evaluate(()=>new Promise(resolve=>{
+      const container=document.querySelector('.conversation'),durations=[];let start=0,last=0;
+      function frame(now){if(!start){start=now;last=now;}else{durations.push(now-last);last=now;}
+        container.scrollTop=(Math.sin((now-start)/260)+1)/2*(container.scrollHeight-container.clientHeight);
+        if(now-start<3000)requestAnimationFrame(frame);else{durations.sort((a,b)=>a-b);resolve({frames:durations.length,fps:durations.length*1000/(now-start),p95FrameMs:durations[Math.floor(durations.length*.95)]});}}
+      requestAnimationFrame(frame);
+    }));
+    await page.locator('.message-body').first().focus();
+    await page.evaluate(()=>{
+      const body=document.querySelector('.message-body'),walker=document.createTreeWalker(body,NodeFilter.SHOW_TEXT);let text;
+      while((text=walker.nextNode())&&text.textContent.length<5){}
+      const range=document.createRange();range.setStart(text,0);range.setEnd(text,5);getSelection().removeAllRanges();getSelection().addRange(range);
+    });
+    await page.keyboard.press('Shift+F10');
+    await page.getByRole('menu',{name:'所选内容操作'}).waitFor();
+    const selected=await page.evaluate(()=>getSelection().toString());
+    await page.keyboard.press('ArrowRight');
+    if(await page.evaluate(()=>document.activeElement.textContent)!=='引用')throw new Error('Keyboard selection menu focus failed');
+    await page.keyboard.press('Escape');
+    if((await page.evaluate(()=>getSelection().toString()))!==selected)throw new Error('Selection lost after keyboard menu');
+    const ax=await cdp.send('Accessibility.getFullAXTree');
+    const accessibleRoles=ax.nodes.filter(n=>!n.ignored).map(n=>({role:n.role?.value,name:n.name?.value}));
+    if(!accessibleRoles.some(n=>n.role==='region'&&n.name==='对话记录')||!accessibleRoles.some(n=>n.role==='textbox'&&n.name?.startsWith('任务输入')))throw new Error('Accessible conversation/composer missing');
+    const memoryAfter=await metric();
+    const benchmark={dataset:'synthetic-not-real-conversation',environment:'headless Chrome; not native WebView2/GPU certification',characters:messages.reduce((sum,m)=>sum+m.text.length,0),fullRenderedCharacters,...frames,jsHeapBefore:memoryBefore.JSHeapUsedSize,jsHeapAfter:memoryAfter.JSHeapUsedSize,nodes:memoryAfter.Nodes,selectionPreserved:true,keyboardMenu:true,accessibilityTree:true,screenReaderSpeech:'not-manually-verified'};
+    if(frames.fps<20||memoryAfter.JSHeapUsedSize>256*1024*1024||pageErrors.length)throw new Error('Performance/error budget exceeded: '+JSON.stringify({...benchmark,pageErrors}));
+    fs.writeFileSync(path.join(outputDir,'long-session-benchmark.json'),JSON.stringify(benchmark,null,2));
+    process.stdout.write(JSON.stringify({ longSessionUi: 'PASS', totalMessages: messages.length, initialRenderMs, expandMs, benchmark, initial, shifted, selectionActions }, null, 2));
   } finally { await browser.close(); }
 }
 

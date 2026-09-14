@@ -11,10 +11,11 @@ $fixture = $null
 $hostProcess = $null
 $token = 'sk-image-fixture-12345678'
 
-function Wait-Until([scriptblock]$Action, [scriptblock]$Predicate, [int]$Seconds = 15) {
+function Wait-Until([scriptblock]$Action, [scriptblock]$Predicate, [int]$Seconds = 15, [string]$Label = 'image API resilience state') {
     $expires = (Get-Date).AddSeconds($Seconds)
-    do { Start-Sleep -Milliseconds 80; try { $value = & $Action } catch { $value = $null }; if (& $Predicate $value) { return $value } } while ((Get-Date) -lt $expires)
-    throw 'Timed out waiting for image API resilience state'
+    $lastError=''
+    do { Start-Sleep -Milliseconds 80; try { $value = & $Action;$lastError='' } catch { $value = $null;$lastError=$_.Exception.Message }; if (& $Predicate $value) { return $value } } while ((Get-Date) -lt $expires)
+    throw ('Timed out waiting for '+$Label+$(if($lastError){': '+$lastError}else{''}))
 }
 
 function Api($Connection, [string]$Path, [string]$Method = 'GET', $Body = $null) {
@@ -26,7 +27,7 @@ function Api($Connection, [string]$Path, [string]$Method = 'GET', $Body = $null)
 try {
     $node = (Get-Command node -ErrorAction Stop).Source
     $fixture = Start-Process -FilePath $node -ArgumentList @((Join-Path $PSScriptRoot 'image-api-resilience-fixture.js'),$portFile,$stateFile) -WorkingDirectory $root -WindowStyle Hidden -PassThru
-    $port = Wait-Until { if(Test-Path $portFile){[int](Get-Content $portFile -Raw)} } { param($v) [int]$v -gt 0 }
+    $port = Wait-Until { if(Test-Path $portFile){[int](Get-Content $portFile -Raw)} } { param($v) [int]$v -gt 0 } 15 'fixture port'
     $env:CLAUDE_GUI_WORKSPACE=$root
     $env:CLAUDE_GUI_ROOT='D:\softwares\ClaudeCode'
     $env:CLAUDE_GUI_TEST_MODE='1'
@@ -34,7 +35,7 @@ try {
     $env:CLAUDE_GUI_IMAGE_TIMEOUT_SECONDS='2'
     $hostProcess=Start-Process -FilePath $Executable -ArgumentList '--host' -WorkingDirectory $root -WindowStyle Hidden -PassThru
     $runtimePath=Join-Path $root '.claude-gui-v2\runtime-state.json'
-    $runtime=Wait-Until {if(Test-Path $runtimePath){Get-Content $runtimePath -Raw -Encoding UTF8|ConvertFrom-Json}} {param($v)$null-ne$v-and$v.state-eq'running'}
+    $runtime=Wait-Until {if(Test-Path $runtimePath){Get-Content $runtimePath -Raw -Encoding UTF8|ConvertFrom-Json}} {param($v)$null-ne$v-and$v.state-eq'running'} 15 'Host runtime'
     Add-Type -AssemblyName System.Security
     $plain=[Security.Cryptography.ProtectedData]::Unprotect([Convert]::FromBase64String([string]$runtime.authProtected),$null,[Security.Cryptography.DataProtectionScope]::CurrentUser)
     $connection=@{Base="http://127.0.0.1:$($runtime.port)";Headers=@{'X-Desktop-Secret'=[Text.Encoding]::UTF8.GetString($plain);'X-Workbench-Protocol'='2'}}
@@ -45,7 +46,7 @@ try {
     }|Out-Null
 
     $success=Api $connection '/api/image/start' 'POST' @{providerId='image-resilience';model='auto-image';prompt='中文生图链路';size='1024x1024';sessionId=[guid]::NewGuid().ToString()}
-    $completed=Wait-Until {Api $connection ("/api/image/poll/"+$success.jobId)} {param($v)$v.state-eq'completed'} 8
+    $completed=Wait-Until {Api $connection ("/api/image/poll/"+$success.jobId)} {param($v)$v.state-eq'completed'} 8 'successful image completion'
     if(-not(Test-Path -LiteralPath $completed.outputPath)-or[IO.Path]::GetExtension([string]$completed.outputPath)-ne'.png'){throw 'Generated image was not persisted with detected PNG format'}
     $file=Invoke-WebRequest -UseBasicParsing -Uri ($connection.Base+'/api/image/file/'+$success.jobId) -Headers $connection.Headers -TimeoutSec 10
     if($file.Headers.'Content-Type'-notlike'image/png*'){throw 'Generated image endpoint returned the wrong MIME type'}
@@ -55,16 +56,16 @@ try {
     $beforeClosed=[int]$state.closed
     $cancelRequestTarget=[int]$state.requests+2
     $cancelledRun=Api $connection '/api/image/start' 'POST' @{providerId='image-resilience';model='hang-image';prompt='取消测试';size='1024x1024';sessionId=[guid]::NewGuid().ToString()}
-    Wait-Until {Get-Content $stateFile -Raw|ConvertFrom-Json} {param($v)[int]$v.requests-ge$cancelRequestTarget}|Out-Null
+    Wait-Until {Get-Content $stateFile -Raw|ConvertFrom-Json} {param($v)[int]$v.requests-ge$cancelRequestTarget} 15 'cancel fixture request'|Out-Null
     $cancelTimer=[Diagnostics.Stopwatch]::StartNew();Api $connection ('/api/image/stop/'+$cancelledRun.jobId) 'POST' @{}|Out-Null
-    $cancelled=Wait-Until {Api $connection ('/api/image/poll/'+$cancelledRun.jobId)} {param($v)$v.state-eq'cancelled'}
-    Wait-Until {Get-Content $stateFile -Raw|ConvertFrom-Json} {param($v)[int]$v.closed-gt$beforeClosed}|Out-Null
+    $cancelled=Wait-Until {Api $connection ('/api/image/poll/'+$cancelledRun.jobId)} {param($v)$v.state-eq'cancelled'} 15 'cancelled image state'
+    Wait-Until {Get-Content $stateFile -Raw|ConvertFrom-Json} {param($v)[int]$v.closed-gt$beforeClosed} 15 'cancelled image socket closure'|Out-Null
     $cancelTimer.Stop()
     if($cancelTimer.ElapsedMilliseconds-gt3000-or$cancelled.outputPath){throw 'Cancelled image request remained active or wrote an output file'}
 
     $timeoutTimer=[Diagnostics.Stopwatch]::StartNew()
     $timeoutRun=Api $connection '/api/image/start' 'POST' @{providerId='image-resilience';model='hang-image';prompt='超时测试';size='1024x1024';sessionId=[guid]::NewGuid().ToString()}
-    $timedOut=Wait-Until {Api $connection ('/api/image/poll/'+$timeoutRun.jobId)} {param($v)$v.state-eq'failed'} 7
+    $timedOut=Wait-Until {Api $connection ('/api/image/poll/'+$timeoutRun.jobId)} {param($v)$v.state-eq'failed'} 7 'timed-out image state'
     $timeoutTimer.Stop()
     if(-not([string]$timedOut.error).Contains('超时')-or$timeoutTimer.ElapsedMilliseconds-gt5000){throw 'Hanging image request was not bounded by timeout'}
 

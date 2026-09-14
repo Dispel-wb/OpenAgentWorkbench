@@ -239,7 +239,6 @@ namespace ClaudeCodeWorkbench
             Directory.CreateDirectory(target);
             long bytes = 0; var files = 0;
             var sourcePrefix = source.TrimEnd('\\') + "\\";
-            var dataPrefix = Path.GetFullPath(AppPaths.Data).TrimEnd('\\') + "\\";
             var pending = new Stack<string>(); pending.Push(source);
             while (pending.Count > 0)
             {
@@ -247,7 +246,7 @@ namespace ClaudeCodeWorkbench
                 foreach (var entry in Directory.EnumerateFileSystemEntries(directory))
                 {
                     var full = Path.GetFullPath(entry);
-                    if (full.StartsWith(dataPrefix, StringComparison.OrdinalIgnoreCase) || string.Equals(Path.GetFileName(full), ".git", StringComparison.OrdinalIgnoreCase)) continue;
+                    if (IsWorkspaceMetadata(source, full)) continue;
                     if ((File.GetAttributes(full) & FileAttributes.ReparsePoint) != 0) throw new InvalidOperationException("非 Git 工作区包含链接/重解析点，无法保证完整回滚：" + full);
                     var relative = full.Substring(sourcePrefix.Length); var destination = Path.Combine(target, relative);
                     if (Directory.Exists(full)) { Directory.CreateDirectory(destination); pending.Push(full); continue; }
@@ -263,10 +262,9 @@ namespace ClaudeCodeWorkbench
         {
             var source = Path.GetFullPath((string)descriptor["sourceWorkspace"]); var snapshot = Path.GetFullPath((string)descriptor["snapshotRoot"]);
             if (!Directory.Exists(snapshot)) throw new DirectoryNotFoundException("任务快照不存在");
-            var dataPrefix = Path.GetFullPath(AppPaths.Data).TrimEnd('\\') + "\\";
-            foreach (var file in Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories).ToArray())
+            foreach (var file in EnumerateWorkspaceFiles(source).ToArray())
             {
-                var full = Path.GetFullPath(file); if (full.StartsWith(dataPrefix, StringComparison.OrdinalIgnoreCase) || full.IndexOf("\\.git\\", StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                var full = Path.GetFullPath(file);
                 var relative = Relative(source, full); if (!File.Exists(Path.Combine(snapshot, relative))) File.Delete(full);
             }
             foreach (var file in Directory.EnumerateFiles(snapshot, "*", SearchOption.AllDirectories))
@@ -279,7 +277,7 @@ namespace ClaudeCodeWorkbench
         private static JArray SnapshotChanges(JObject descriptor)
         {
             var source = (string)descriptor["sourceWorkspace"]; var snapshot = (string)descriptor["snapshotRoot"]; var values = new JArray();
-            var paths = new HashSet<string>(Directory.Exists(source) ? Directory.EnumerateFiles(source, "*", SearchOption.AllDirectories).Select(path => Relative(source, path)) : Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
+            var paths = new HashSet<string>(Directory.Exists(source) ? EnumerateWorkspaceFiles(source).Select(path => Relative(source, path)) : Enumerable.Empty<string>(), StringComparer.OrdinalIgnoreCase);
             if (Directory.Exists(snapshot)) foreach (var path in Directory.EnumerateFiles(snapshot, "*", SearchOption.AllDirectories)) paths.Add(Relative(snapshot, path));
             foreach (var relative in paths.Take(5000))
             {
@@ -288,6 +286,30 @@ namespace ClaudeCodeWorkbench
                 if (state != "unchanged") values.Add(new JObject { ["path"] = relative, ["state"] = state });
             }
             return values;
+        }
+
+        private static IEnumerable<string> EnumerateWorkspaceFiles(string root)
+        {
+            root = Path.GetFullPath(root);
+            var pending = new Stack<string>(); pending.Push(root);
+            while (pending.Count > 0)
+            {
+                foreach (var entry in Directory.EnumerateFileSystemEntries(pending.Pop()))
+                {
+                    var full = Path.GetFullPath(entry);
+                    if (IsWorkspaceMetadata(root, full)) continue;
+                    if (Directory.Exists(full)) pending.Push(full);
+                    else yield return full;
+                }
+            }
+        }
+
+        private static bool IsWorkspaceMetadata(string root, string path)
+        {
+            var relative = Relative(root, path);
+            return relative.Split(new[] { Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar }, StringSplitOptions.RemoveEmptyEntries)
+                .Any(segment => string.Equals(segment, ".git", StringComparison.OrdinalIgnoreCase) ||
+                    string.Equals(segment, ".claude-gui-v2", StringComparison.OrdinalIgnoreCase));
         }
 
         private static JArray GitChanges(string root)
@@ -505,13 +527,20 @@ namespace ClaudeCodeWorkbench
 
                 var plainRoot = Path.Combine(root, "plain-source"); Directory.CreateDirectory(plainRoot);
                 File.WriteAllText(Path.Combine(plainRoot, "plain.txt"), "plain-before", new UTF8Encoding(false));
+                var oldStateRoot = Path.Combine(plainRoot, ".claude-gui-v2", "runs", new string('a', 80), "workspace-snapshot");
+                Directory.CreateDirectory(oldStateRoot);
+                var oldStateFile = Path.Combine(oldStateRoot, "state.txt");
+                File.WriteAllText(oldStateFile, "state-before", new UTF8Encoding(false));
                 var plainRun = "plain-run"; var plainRunDir = Path.Combine(AppPaths.Runs, plainRun); Directory.CreateDirectory(plainRunDir);
                 TaskWorkspaceManager.Prepare(plainRoot, plainRun, plainRunDir, true, "plain-task");
+                if (Directory.Exists(Path.Combine(plainRunDir, "workspace-snapshot", ".claude-gui-v2"))) return 63;
                 File.WriteAllText(Path.Combine(plainRoot, "plain.txt"), "plain-after", new UTF8Encoding(false));
                 File.WriteAllText(Path.Combine(plainRoot, "added.txt"), "added", new UTF8Encoding(false));
-                if ((TaskWorkspaceManager.Describe(plainRun)["changes"] as JArray ?? new JArray()).Count != 2) return 63;
+                File.WriteAllText(oldStateFile, "state-after", new UTF8Encoding(false));
+                if ((TaskWorkspaceManager.Describe(plainRun)["changes"] as JArray ?? new JArray()).Count != 2) return 64;
                 TaskWorkspaceManager.Revert(plainRun);
-                if (File.ReadAllText(Path.Combine(plainRoot, "plain.txt"), Encoding.UTF8) != "plain-before" || File.Exists(Path.Combine(plainRoot, "added.txt"))) return 64;
+                if (File.ReadAllText(Path.Combine(plainRoot, "plain.txt"), Encoding.UTF8) != "plain-before" || File.Exists(Path.Combine(plainRoot, "added.txt")) ||
+                    File.ReadAllText(oldStateFile, Encoding.UTF8) != "state-after") return 65;
                 Exec(gitRoot, "worktree remove --force " + Q((string)isolated.Descriptor["worktreeRoot"]));
                 return 0;
             }

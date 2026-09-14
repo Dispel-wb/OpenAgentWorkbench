@@ -11,6 +11,9 @@
 | Claude Code | 原生 CLI 的 stream-json | 工作台所选 Provider / 文字模型；必要时经本地协议适配器 |
 | Codex CLI | `codex exec --json`，后续轮使用 `exec resume` | Codex 自身登录和配置；工作台模型输入可留空 |
 | DSHarness CLI | `node …/dsh/lib/bin.js --profile sdk` 的 JSON-RPC | 工作台 Provider 的兼容文字接口、密钥和模型；通过子进程环境传递 |
+| Pi Coding Agent | `node …/pi-coding-agent/dist/bundle/cli.js --mode rpc` | 工作台文字 Provider；OpenAI / Anthropic 原生协议 |
+
+Pi 必须显式选择，固定适配 **0.85.1**。支持中文流式、多轮与跨进程续接、原生工具事件和停止清理；只读/规划禁用全部工具，完整权限无沙箱，其他权限模式和附件暂不支持。安装、协议、鉴权及验证细节见 [Pi 接入说明](PI_AGENT.md)。
 
 Codex 自动查找设置中的路径、`CLAUDE_GUI_CODEX_EXE`、PATH、桌面安装的版本化 bin 目录。不需要安装 Claude Code。导入的 Chat Completions 接口不会被直接当作 Codex Responses 接口。
 

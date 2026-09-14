@@ -18,8 +18,8 @@ function Wait-File([string]$Path, [int]$Seconds = 15) {
 }
 
 try {
-    $vsRoot = 'C:\Program Files\Microsoft Visual Studio\2022\Community'
-    $csc = Join-Path $vsRoot 'MSBuild\Current\Bin\Roslyn\csc.exe'
+    $testDependencies = & (Join-Path $PSScriptRoot 'resolve-test-build-dependencies.ps1')
+    $csc = $testDependencies.Compiler
     & $csc /nologo /target:exe /platform:x64 "/out:$fake" /reference:System.dll /reference:System.Core.dll /reference:System.Net.Http.dll (Join-Path $PSScriptRoot 'adapter-run-cancel-worker.cs')
     if ($LASTEXITCODE -ne 0) { throw 'Adapter cancellation Worker build failed' }
     $fixture = Start-Process -FilePath $node -ArgumentList @((Join-Path $PSScriptRoot 'adapter-resilience-fixture.js'), $portFile, $stateFile) -WorkingDirectory $root -WindowStyle Hidden -PassThru
@@ -64,6 +64,8 @@ try {
     }
     & $node (Join-Path $PSScriptRoot 'native_adapter_smoke.js') $runtime.port $secret
     if ($LASTEXITCODE -ne 0) { throw 'Existing Adapter conversion smoke failed' }
+    & $node (Join-Path $PSScriptRoot 'provider-protocol-matrix.js') $runtime.port $secret
+    if ($LASTEXITCODE -ne 0) { throw 'Provider protocol matrix failed' }
 }
 finally {
     if ($hostProcess -and -not $hostProcess.HasExited) { Stop-Process -Id $hostProcess.Id -Force -ErrorAction SilentlyContinue }

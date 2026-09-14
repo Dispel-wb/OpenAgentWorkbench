@@ -31,14 +31,15 @@ global.document = {
   querySelector() { return null; }
 };
 global.crypto = { randomUUID() { return '00000000-0000-4000-8000-000000000000'; } };
+global.HTMLElement=class {};
 
 const root = path.resolve(__dirname, '..');
-const moduleSources = ['ui-store.js', 'provider-catalog.js'].map(name => fs.readFileSync(path.join(root, 'static', 'modules', name), 'utf8'));
+const moduleSources = ['ui-store.js', 'provider-catalog.js','document-ui.js','workflow-ui.js'].map(name => fs.readFileSync(path.join(root, 'static', 'modules', name), 'utf8'));
 const appSource = [...moduleSources, fs.readFileSync(path.join(root, 'static', 'app.js'), 'utf8')].join('\n');
 vm.runInThisContext(appSource, { filename: 'app.js' });
 if (!definition) throw new Error('Vue application contract not captured');
 
-const app = { ...definition.data(), ...definition.methods };
+const app = { ...Object.assign({},...definition.mixins.map(m=>m.data()),...definition.mixins.map(m=>m.methods)),...definition.data(), ...definition.methods,$refs:{} };
 const codexOnly = {settings:{workerHarness:'codex',model:''},providers:[],agentRuntime:{selected:'codex'},selectedProvider:null};
 codexOnly.workerUsesOwnModel = definition.computed.workerUsesOwnModel.call(codexOnly);
 if (!definition.computed.textRouteReady.call(codexOnly)) throw new Error('Codex-only fresh install must not require an imported Provider.');
@@ -265,8 +266,24 @@ if (!workbenchApi.includes('/api/workbench/extensions/trust') || !apiServer.incl
   throw new Error('Project extension trust, fingerprint, and backend-block contract is incomplete');
 }
 
+// Delta and terminal events can arrive in the same poll, before the 32ms flush.
+// A terminal fallback must not be prepended to an unflushed copy of that text.
+const streamed = { ...definition.data(), ...definition.methods, scrollBottom() {} };
+for (const scenario of ['buffered', 'already-flushed', 'terminal-only']) {
+  streamed.streamMessage = { text: '', workflow: [] };
+  streamed.streamTextBuffer = ''; streamed.streamFlushHandle = 0;
+  if (scenario !== 'terminal-only') {
+    streamed.processStreamLine(JSON.stringify({ type:'stream_event',event:{type:'content_block_delta',delta:{type:'text_delta',text:'中文回复'}} }));
+    if (scenario === 'already-flushed') streamed.flushStreamText();
+  }
+  streamed.processStreamLine(JSON.stringify({type:'result',result:'中文回复',is_error:false}));
+  streamed.flushStreamText();
+  if (streamed.streamMessage.text !== '中文回复') throw new Error(`Terminal text duplication: ${scenario}`);
+}
+
 console.log(JSON.stringify({
   uiContract: 'PASS',
+  coalescedStreamTerminal: true,
   localPdfCard: true,
   localOfficeCard: true,
   bareAbsolutePath: true,

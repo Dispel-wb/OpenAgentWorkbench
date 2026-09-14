@@ -11,7 +11,7 @@
 
 1. UI 只通过 127.0.0.1 的随机端口访问 Host，并同时提交 DPAPI 保护后注入的本机密钥及协议版本。
 2. Host 是任务、队列、审批、调度和事件真源。关闭或崩溃 UI 不改变任务状态。
-3. Worker 位于 Windows Job Object 中。Claude 使用任务级权限 MCP；Codex 使用自身 sandbox，DSHarness 使用自身权限模式。未适配的工作台交互审批/工具白名单在运行前拒绝，不能静默扩大权限。
+3. Worker 位于 Windows Job Object 中。Claude 使用任务级权限 MCP；Codex 使用自身 sandbox，DSHarness 使用自身权限模式。Pi 的非 Full 模式加载内置路径策略扩展并限制为工作区文件工具；该扩展不是 OS 沙箱，因此 PowerShell 只在明确的 Full 模式开放。未适配的工作台交互审批在运行前拒绝，不能静默扩大权限。
 4. Provider 与 MCP 属于外部系统；超时、错误正文和模型元数据均不可信。
 5. 配置任务隔离时，修改在 Git worktree 或快照内完成，Review 后合并；直接工作区/full 模式不能保证所有变更可回滚。
 

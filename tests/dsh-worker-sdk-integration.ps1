@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Executable, [string]$NodePath='')
+param([Parameter(Mandatory=$true)][string]$Executable, [string]$NodePath='', [ValidateSet('none','oversize','flood','byte-flood','malformed','eof')][string]$Fault='none')
 $ErrorActionPreference='Stop'
 if(-not $NodePath){$NodePath=(Get-Command node).Source}
 $root=Join-Path ([IO.Path]::GetTempPath()) ('dsh-sdk-中文 路径-'+[guid]::NewGuid().ToString('N'))
@@ -7,21 +7,31 @@ $process=$null
 try {
     $config=Join-Path $root 'bridge.json'
     $payload=@{harness='dsh';executable=$NodePath;entry=(Join-Path $PSScriptRoot 'fake-dsh-worker.js');profile='sdk';home=$root;workspace=$root;model='fixture-model';permissionMode='readonly';sessionId='fixture-session';maxTurns=10}
+    if($Fault -ne 'none'){$payload.model='fixture-'+$Fault}
     [IO.File]::WriteAllText($config,($payload|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
     $start=[Diagnostics.ProcessStartInfo]::new()
     $start.FileName=[IO.Path]::GetFullPath($Executable);$start.Arguments='--agent-worker-bridge "'+$config+'"'
     $start.UseShellExecute=$false;$start.CreateNoWindow=$true
     $start.RedirectStandardInput=$true;$start.RedirectStandardOutput=$true;$start.RedirectStandardError=$true
     $start.StandardOutputEncoding=[Text.UTF8Encoding]::new($false)
+    # Materialize a canonical Windows environment block (some launchers provide both Path and PATH).
+    $start.Environment['WORKBENCH_TEST_PROCESS']='1'
     $process=[Diagnostics.Process]::Start($start)
     $output=$process.StandardOutput.ReadToEndAsync();$errors=$process.StandardError.ReadToEndAsync()
     $line='{"type":"user","message":{"role":"user","content":[{"type":"text","text":"中文连续对话"}]}}'
     $bytes=[Text.Encoding]::UTF8.GetBytes($line+"`n"+$line+"`n")
     $process.StandardInput.BaseStream.Write($bytes,0,$bytes.Length);$process.StandardInput.BaseStream.Flush();$process.StandardInput.Close()
     if(-not $process.WaitForExit(20000)){throw 'DSHarness bridge timed out'}
-    if($process.ExitCode -ne 0){throw ('DSHarness bridge failed: '+$errors.Result+' '+$output.Result)}
     $events=@($output.Result -split "`r?`n"|Where-Object{$_}|ForEach-Object{$_|ConvertFrom-Json})
     $results=@($events|Where-Object type -eq result)
+    if($Fault -ne 'none'){
+        if($process.ExitCode -eq 0 -or $results.Count -ne 1 -or -not $results[0].is_error){throw ('Fault did not terminate safely: '+$Fault)}
+        $expected=@{oversize='character limit';flood='过量事件';'byte-flood'='累计缓存';malformed='Invalid';eof='输出管道已关闭'}[$Fault]
+        if($results[0].result -notmatch $expected){throw ('Wrong fault outcome: '+$results[0].result)}
+        [pscustomobject]@{DshTransportFault='PASS';Fault=$Fault;SafeFailure=$true}|Format-List
+        return
+    }
+    if($process.ExitCode -ne 0){throw ('DSHarness bridge failed: '+$errors.Result+' '+$output.Result)}
     if($results.Count -ne 2 -or @($results|Where-Object is_error).Count){throw 'Expected two successful DSHarness turns'}
     if(@($results|Where-Object{$_.result -ne 'DSHarness 中文回复' -or $_.usage.input_tokens -ne 3 -or $_.usage.output_tokens -ne 4}).Count){throw 'Reply or Token mapping failed'}
     if(@($events|Where-Object{$_.type -eq 'user' -and $_.message.content[0].type -eq 'tool_result'}).Count -ne 2){throw 'Tool results were not mapped'}
