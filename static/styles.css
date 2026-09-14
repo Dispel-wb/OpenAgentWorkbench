@@ -276,3 +276,31 @@ html:not([data-edition="local"][data-skin="claude"]) .settings-content :is(input
 html:not([data-edition="local"][data-skin="claude"]) .settings-content .switch input:checked+span{border-color:#5275a8;background:#5275a8}
 html:not([data-edition="local"][data-skin="claude"]) .settings-content .switch span:after,
 html:not([data-edition="local"][data-skin="claude"]) .settings-content .switch input:checked+span:after{background:#eaf2ff}
+
+/* The developer workbench predates the theme tokens and used many component-local
+   brown literals. Keep its complete chrome cold unless Local Claude is selected. */
+html:not([data-edition="local"][data-skin="claude"]){--workbench-bg:#101722;--workbench-panel:#131c2a;--workbench-control:#17243a;--workbench-control-strong:#1d2e4b;--workbench-border:#304a70;--workbench-text:#eaf2ff;--workbench-muted:#9eb1cf;--workbench-quiet:#7186a6}
+html:not([data-edition="local"][data-skin="claude"]) .inspector{border-color:var(--workbench-border);background:var(--workbench-bg)}
+html:not([data-edition="local"][data-skin="claude"]) .inspector>header{border-color:var(--workbench-border);background:var(--workbench-panel)}
+html:not([data-edition="local"][data-skin="claude"]) .inspector *{border-color:var(--workbench-border)}
+html:not([data-edition="local"][data-skin="claude"]) .inspector>header nav button{color:var(--workbench-muted)}
+html:not([data-edition="local"][data-skin="claude"]) .inspector>header nav button:hover,
+html:not([data-edition="local"][data-skin="claude"]) .inspector>header nav button.active{background:var(--workbench-control-strong);color:var(--workbench-text)}
+html:not([data-edition="local"][data-skin="claude"]) .inspector-close{color:var(--workbench-muted)}
+html:not([data-edition="local"][data-skin="claude"]) .inspector-close:hover{background:var(--workbench-control-strong);color:var(--workbench-text)}
+html:not([data-edition="local"][data-skin="claude"]) :is(.inspector-pane,.file-workspace,.editor-panel,.terminal-pane){background:var(--workbench-bg)}
+html:not([data-edition="local"][data-skin="claude"]) :is(.pane-toolbar,.search-box,.preview-bar,.terminal-input,.diff-tabs){background:var(--workbench-panel)}
+html:not([data-edition="local"][data-skin="claude"]) .pane-empty{color:var(--workbench-quiet)}
+html:not([data-edition="local"][data-skin="claude"]) .editor-panel>header code{color:var(--workbench-muted)}
+html:not([data-edition="local"][data-skin="claude"]) .editor-panel textarea,
+html:not([data-edition="local"][data-skin="claude"]) .diff-view{background:#0d1420;color:#cbd8eb}
+html:not([data-edition="local"][data-skin="claude"]) .inspector :is(input,select,textarea){background:var(--workbench-control);color:var(--workbench-text)}
+html:not([data-edition="local"][data-skin="claude"]) .inspector :is(input,select,textarea):focus{outline:0;border-color:#6d9cff;box-shadow:0 0 0 2px color-mix(in srgb,#6d9cff 22%,transparent)}
+html:not([data-edition="local"][data-skin="claude"]) .inspector :is(.pane-toolbar button,.editor-panel header button,.git-files button,.diff-tabs button,.commit-row button,.search-box button,.preview-bar button,.workspace-shortcuts button,.checkpoint-list button,.terminal-input button,.schedule-form button,.schedule-actions button,.extension-actions button,.extension-heading button){background:var(--workbench-control);color:var(--workbench-text)}
+html:not([data-edition="local"][data-skin="claude"]) .inspector :is(.diff-tabs button.active,.tag-cloud>span){background:var(--workbench-control-strong);color:#a9c7ff}
+html:not([data-edition="local"][data-skin="claude"]) .inspector :is(.search-results>button:hover,.tree-list button:hover,.tree-list button.active){background:var(--workbench-control-strong)}
+html:not([data-edition="local"][data-skin="claude"]) .inspector :is(.extension-summary>span,.usage-kpis>div,.extension-list,.metrics-overview>div,.run-card,.schedule-evidence-section){background:var(--workbench-panel)}
+html:not([data-edition="local"][data-skin="claude"]) .inspector :is(.git-files code,.extension-summary b,.usage-kpis b,.usage-bars i,.terminal-input span){color:#8eb6ff}
+html:not([data-edition="local"][data-skin="claude"]) .inspector .usage-bars i{background:#5275a8}
+html:not([data-edition="local"][data-skin="claude"]) .inspector :is(.git-files span,.search-results b,.extension-list b,.checkpoint-list b,.schedule-list span,.health-card code){color:var(--workbench-text)}
+html:not([data-edition="local"][data-skin="claude"]) .inspector :is(.search-results span,.search-results small,.extension-list code,.tag-cloud small,.usage-bars label,.checkpoint-list small,.schedule-list small,.health-card span,.permission-config label,.permission-config p){color:var(--workbench-muted)}
