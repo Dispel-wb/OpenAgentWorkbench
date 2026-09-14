@@ -2,6 +2,11 @@
 
 ## Unreleased — 1.0.0 readiness work
 
+- Fixed recursive workspace snapshots by excluding `.claude-gui-v2` and `.git` at every depth during snapshot, change detection and rollback; stale nested run snapshots can no longer recursively copy Workbench state into themselves.
+- Expanded Pi 0.85.1 on Windows: read/plan now expose workspace-scoped read/search/list tools, edit/agent expose workspace-scoped file edits, scoped mode honors its file-tool allowlist, and Full uses Pi's actual `powershell` tool instead of the unavailable `bash` name.
+- Added a fail-closed Pi policy extension that canonicalizes file paths, blocks access outside the selected workspace and protects `.git`/`.claude-gui-v2` writes. PowerShell remains Full-only because this policy is not an OS sandbox.
+- Fixed build bootstrap so a stale, non-runnable `.venv` launcher is rejected instead of being selected merely because the file exists.
+- Verified the current unsigned OpenSource bytes with a fresh 70/70 offline regression and same-environment reproducible build. This does not satisfy the new 72-hour or clean-Windows requirements.
 - Candidate binaries now carry 1.0.0 metadata so the exact intended release bytes can undergo long-term testing. This is an unreleased candidate, not a completed certification or published stable release.
 - Fixed duplicate rendering when a buffered streaming delta and terminal result arrive in the same poll; verified the old failure and corrected behavior in native WebView2.
 - Fixed terminal polling returning stale metadata when background reconciliation wins the finalization race; a controlled two-case regression reproduces the old failure without relying on timing luck.

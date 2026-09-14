@@ -88,7 +88,8 @@ try {
     $headers = @{'X-Desktop-Secret'=$secret; 'X-Workbench-Protocol'='2'}
     $hostBase = "http://127.0.0.1:$($runtime.port)"
     foreach ($core in @('codex','dsh','pi')) {
-        foreach ($mode in @('manual','scoped',' Manual ')) {
+        $unsupportedModes = if ($core -eq 'pi') { @('manual',' Manual ') } else { @('manual','scoped',' Manual ') }
+        foreach ($mode in $unsupportedModes) {
             $unsafeBody = [Text.Encoding]::UTF8.GetBytes((@{workerHarness=$core;permissionMode=$mode;prompt='fixture denied before launch'}|ConvertTo-Json -Compress))
             $rejected = $false
             try { Invoke-RestMethod "$hostBase/api/chat/start" -Method Post -Headers $headers -Body $unsafeBody -ContentType 'application/json' -TimeoutSec 5 | Out-Null }

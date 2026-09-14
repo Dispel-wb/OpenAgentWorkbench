@@ -14,7 +14,7 @@ function config(name, entry, mode = 'readonly', baseUrl = '', api = 'openai-comp
   const home = path.join(root, name); fs.mkdirSync(home, { recursive: true });
   write(path.join(home, 'models.json'), { providers: { workbench: { baseUrl, api, apiKey: '$WORKBENCH_PI_API_KEY', models: [{ id: 'fixture-model', input: ['text'], reasoning: false }] } } });
   write(path.join(home, 'settings.json'), { retry: { enabled: false }, compaction: { enabled: false }, packages: [] });
-  const result = { harness: 'pi', executable: process.execPath, entry, home, workspace: home, model: 'fixture-model', permissionMode: mode, sessionId: name, statePath: path.join(home, 'state.json'), maxTurns: 8 };
+  const result = { harness: 'pi', executable: process.execPath, entry, home, workspace: home, model: 'fixture-model', permissionMode: mode, sessionId: name, statePath: path.join(home, 'state.json'), maxTurns: 8, policyPath: path.resolve('runtimes/pi/workbench-policy.mjs'), allowedTools: [], disallowedTools: [] };
   const file = path.join(home, 'bridge.json'); write(file, result); return { ...result, file };
 }
 function run(cfg, prompts, timeout = 20000) {
@@ -37,12 +37,12 @@ async function main() {
   assert.equal(good.code, 0); assert.equal(results(good).length, 2);
   for (const item of results(good)) { assert.equal(item.is_error, false); assert.equal(item.result, '中文\u2028流式'); assert.deepEqual(item.usage, { input_tokens: 11, output_tokens: 7, cache_read_input_tokens: 3, cache_creation_input_tokens: 2 }); }
   assert.equal(good.events.filter(e => e.type === 'stream_event').length, 2); count++;
-  for (const [name, reason] of [['reject', 'fixture rejected'], ['malformed', '无效 JSON'], ['oversize', 'character limit'], ['no-terminal', '完整终态'], ['approval', '未自动批准'], ['readonly-tool', '禁用工具模式'], ['model-error', 'fixture model error']]) {
+  for (const [name, reason] of [['reject', 'fixture rejected'], ['malformed', '无效 JSON'], ['oversize', 'character limit'], ['no-terminal', '完整终态'], ['approval', '未自动批准'], ['readonly-tool', '未授权工具'], ['model-error', 'fixture model error']]) {
     const failed = await run(config('fake-' + name, fake), [name]);
     assert.notEqual(failed.code, 0, name); assert.equal(results(failed).length, 1, name);
     assert.equal(results(failed)[0].is_error, true, name); assert.ok(results(failed)[0].result.includes(reason), JSON.stringify(failed)); count++;
   }
-  for (const mode of ['agent', 'edit', 'manual', 'scoped', 'invalid']) {
+  for (const mode of ['manual', 'invalid']) {
     const failed = await run(config('mode-' + mode, fake, mode), ['hello']);
     assert.equal(results(failed)[0].is_error, true); assert.match(results(failed)[0].result, /未启动核心/); count++;
   }
@@ -54,7 +54,7 @@ async function main() {
           assert.equal(new URL(req.url, 'http://localhost').pathname, '/anthropic/v1/messages');
           assert.equal(req.headers['x-api-key'], 'fixture-local-only');
           const parsed = JSON.parse(body); requests.push(parsed);
-          assert.equal((parsed.tools || []).length, 0);
+          assert.deepEqual((parsed.tools || []).map(tool => tool.name).sort(), ['find', 'grep', 'ls', 'read']);
           res.writeHead(200, { 'content-type': 'text/event-stream' });
           const event = (type, data) => res.write(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
           event('message_start', { message: { id: 'msg-fixture', type: 'message', role: 'assistant', model: 'fixture-model', content: [], stop_reason: null, usage: { input_tokens: 12, output_tokens: 0 } } });
@@ -73,14 +73,15 @@ async function main() {
         res.writeHead(200, { 'Content-Type': 'text/event-stream' });
         const send = (delta, finish_reason = null) => res.write('data: ' + JSON.stringify({ id: 'chatcmpl-fixture', object: 'chat.completion.chunk', created: 1, model: 'fixture-model', choices: [{ index: 0, delta, finish_reason }] }) + '\n\n');
         send({ role: 'assistant' });
-        if (userText.includes('REAL_WRITE') && parsed.messages.at(-1).role !== 'tool') {
+        if ((userText.includes('REAL_WRITE') || userText.includes('REAL_ESCAPE')) && parsed.messages.at(-1).role !== 'tool') {
           assert.ok(parsed.tools.some(t => t.function.name === 'write'));
-          send({ tool_calls: [{ index: 0, id: 'fixture-write', type: 'function', function: { name: 'write', arguments: JSON.stringify({ path: 'pi-proof.txt', content: 'Pi 原生写入成功\n' }) } }] });
+          const target = userText.includes('REAL_ESCAPE') ? '../pi-escape.txt' : 'pi-proof.txt';
+          send({ tool_calls: [{ index: 0, id: 'fixture-write', type: 'function', function: { name: 'write', arguments: JSON.stringify({ path: target, content: 'Pi 原生写入成功\n' }) } }] });
           send({}, 'tool_calls');
         } else {
           if (userText.includes('REAL_RESUME')) assert.ok(JSON.stringify(parsed.messages).includes('REMEMBER_MARKER_中文'), 'Native session did not resume');
-          if (!userText.includes('REAL_WRITE')) assert.equal((parsed.tools || []).length, 0, 'Readonly exposed tools');
-          send({ content: userText.includes('REAL_WRITE') ? '文件已写入' : '真实 Pi 中文流式回复' }); send({}, 'stop');
+          if (!userText.includes('REAL_WRITE') && !userText.includes('REAL_ESCAPE')) assert.deepEqual((parsed.tools || []).map(tool => tool.function.name).sort(), ['find', 'grep', 'ls', 'read']);
+          send({ content: userText.includes('REAL_WRITE') ? '文件已写入' : userText.includes('REAL_ESCAPE') ? '越界写入已被阻止' : '真实 Pi 中文流式回复' }); send({}, 'stop');
         }
         res.write('data: ' + JSON.stringify({ id: 'chatcmpl-fixture', object: 'chat.completion.chunk', choices: [], usage: { prompt_tokens: 24, completion_tokens: 8, total_tokens: 32 } }) + '\n\n');
         res.end('data: [DONE]\n\n');
@@ -95,11 +96,15 @@ async function main() {
     assert.equal(first.code, 0, JSON.stringify(first)); assert.equal(results(first).length, 2); count++;
     assert.ok(first.events.some(e => e.type === 'stream_event'));
     const resumed = await run(real, ['REAL_RESUME']); assert.equal(resumed.code, 0, JSON.stringify(resumed)); count++;
-    const full = config('real-full', realEntry, 'full', baseUrl);
+    const full = config('real-edit', realEntry, 'edit', baseUrl);
     const tool = await run(full, ['REAL_WRITE']); assert.equal(tool.code, 0, JSON.stringify(tool));
     assert.equal(fs.readFileSync(path.join(full.workspace, 'pi-proof.txt'), 'utf8'), 'Pi 原生写入成功\n');
     assert.ok(tool.events.some(e => e.type === 'assistant' && e.message.content[0].type === 'tool_use'));
     assert.ok(tool.events.some(e => e.type === 'user' && e.message.content[0].type === 'tool_result')); count++;
+    const escape = config('real-edit-escape', realEntry, 'edit', baseUrl);
+    const blocked = await run(escape, ['REAL_ESCAPE']); assert.equal(blocked.code, 0, JSON.stringify(blocked));
+    assert.equal(fs.existsSync(path.join(root, 'pi-escape.txt')), false);
+    assert.ok(blocked.events.some(e => e.type === 'user' && e.message.content[0].type === 'tool_result' && e.message.content[0].is_error)); count++;
     const failed = await run(config('real-error', realEntry, 'readonly', baseUrl), ['REAL_ERROR']);
     assert.notEqual(failed.code, 0); assert.equal(results(failed)[0].is_error, true); count++;
     const anthropic = await run(config('real-anthropic', realEntry, 'readonly', baseUrl.replace('/v1', '/anthropic'), 'anthropic-messages'), ['中文 Anthropic']);

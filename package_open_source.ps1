@@ -52,7 +52,7 @@ if (Test-Path -LiteralPath $evidenceRoot -PathType Container) {
         }
     }
 }
-foreach ($file in @('install_pi_runtime.ps1','runtimes\pi\package.json','runtimes\pi\package-lock.json','docs\PI_AGENT.md')) { Copy-PublicFile $file }
+foreach ($file in @('install_pi_runtime.ps1','runtimes\pi\package.json','runtimes\pi\package-lock.json','runtimes\pi\workbench-policy.mjs','docs\PI_AGENT.md')) { Copy-PublicFile $file }
 Copy-PublicFile 'build\dependencies.lock.json'
 Get-ChildItem -LiteralPath (Join-Path $resolvedSource 'third_party') -File | ForEach-Object {
     Copy-PublicFile (Join-Path 'third_party' $_.Name)

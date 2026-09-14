@@ -25,7 +25,7 @@ namespace ClaudeCodeWorkbench
                 try
                 {
                     var mode = ((string)config["permissionMode"] ?? "readonly").Trim().ToLowerInvariant();
-                    if (!new[] { "readonly", "plan", "full" }.Contains(mode)) throw new InvalidDataException("Pi 不支持此权限模式；未启动核心。");
+                    if (!new[] { "readonly", "plan", "scoped", "edit", "agent", "full" }.Contains(mode)) throw new InvalidDataException("Pi 不支持此权限模式；未启动核心。");
                     emit(new JObject { ["type"] = "system", ["subtype"] = "init", ["worker"] = "pi", ["session_id"] = config["sessionId"] });
                     string line;
                     while ((line = SdkFrameReader.ReadLine(input)) != null)
@@ -65,8 +65,15 @@ namespace ClaudeCodeWorkbench
                 if (!File.Exists(sessionFile)) throw new InvalidDataException("Pi 会话文件已丢失；未静默创建无历史会话。");
                 args.Add("--session"); args.Add(sessionFile);
             }
-            if (mode != "full") args.Add("--no-tools");
-            else { args.Add("--tools"); args.Add("read,bash,edit,write,grep,find,ls"); }
+            var enabledTools = EnabledTools(config, mode);
+            if (enabledTools.Count == 0) args.Add("--no-tools");
+            else { args.Add("--tools"); args.Add(string.Join(",", enabledTools)); }
+            if (mode != "full")
+            {
+                var policyPath = (string)config["policyPath"] ?? "";
+                if (!File.Exists(policyPath)) throw new FileNotFoundException("Pi 工作区策略扩展缺失；未启动工具。", policyPath);
+                args.Add("--extension"); args.Add(policyPath);
+            }
             var instructions = (string)config["trustedInstructionPath"] ?? "";
             if (instructions.Length > 0) { args.Add("--append-system-prompt"); args.Add(instructions); }
             var start = new ProcessStartInfo {
@@ -77,7 +84,36 @@ namespace ClaudeCodeWorkbench
             start.EnvironmentVariables["PI_CODING_AGENT_DIR"] = (string)config["home"];
             start.EnvironmentVariables["PI_OFFLINE"] = "1";
             start.EnvironmentVariables["PI_TELEMETRY"] = "0";
+            start.EnvironmentVariables["WORKBENCH_PI_WORKSPACE"] = Path.GetFullPath((string)config["workspace"]);
             return start;
+        }
+
+        private static List<string> EnabledTools(JObject config, string mode)
+        {
+            var read = new[] { "read", "grep", "find", "ls" };
+            var edit = new[] { "read", "edit", "write", "grep", "find", "ls" };
+            var shell = Environment.OSVersion.Platform == PlatformID.Win32NT ? "powershell" : "bash";
+            var full = new[] { "read", shell, "edit", "write", "grep", "find", "ls" };
+            IEnumerable<string> selected = mode == "full" ? full : mode == "edit" || mode == "agent" ? edit : read;
+            if (mode == "scoped")
+            {
+                var requested = new HashSet<string>((config["allowedTools"] as JArray ?? new JArray()).Values<string>()
+                    .Select(NormalizeTool), StringComparer.OrdinalIgnoreCase);
+                selected = edit.Where(tool => requested.Contains(tool));
+            }
+            var denied = new HashSet<string>((config["disallowedTools"] as JArray ?? new JArray()).Values<string>()
+                .Select(NormalizeTool), StringComparer.OrdinalIgnoreCase);
+            return selected.Where(tool => !denied.Contains(tool)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        }
+
+        private static string NormalizeTool(string value)
+        {
+            var tool = (value ?? "").Replace("_", "").Replace("-", "").Trim().ToLowerInvariant();
+            if (tool == "glob") return "find";
+            if (tool == "multiedit" || tool == "notebookedit") return "edit";
+            if (tool == "notebookread") return "read";
+            if (tool == "bash" || tool == "powershell") return Environment.OSVersion.Platform == PlatformID.Win32NT ? "powershell" : "bash";
+            return tool;
         }
 
         private static void RunTurn(JObject config, string mode, string prompt, Action<JObject> emit)
@@ -140,7 +176,8 @@ namespace ClaudeCodeWorkbench
                     }
                     else if (type == "tool_execution_start")
                     {
-                        if (mode != "full") throw new InvalidDataException("Pi 在禁用工具模式发起工具执行，已停止。");
+                        if (!EnabledTools(config, mode).Contains((string)value["toolName"], StringComparer.OrdinalIgnoreCase))
+                            throw new InvalidDataException("Pi 发起了未授权工具，已停止。");
                         emit(new JObject { ["type"] = "assistant", ["message"] = new JObject { ["role"] = "assistant", ["content"] = new JArray(new JObject {
                             ["type"] = "tool_use", ["id"] = value["toolCallId"], ["name"] = value["toolName"], ["input"] = value["args"] }) } });
                     }

@@ -30,7 +30,7 @@ namespace ClaudeCodeWorkbench
                 ["transport"] = pi ? "pi-rpc-jsonl" : dsh ? "json-rpc-stdio" : codex ? "codex-exec-jsonl" : "jsonl-stdio",
                 ["resume"] = claude || codex || pi ? "core-persisted-session" : dsh ? "live-process-only" : "worker-defined",
                 ["liveSteering"] = claude, ["workbenchInteractiveApproval"] = claude,
-                ["workbenchToolFilter"] = claude, ["processTreeCancellation"] = true,
+                ["workbenchToolFilter"] = claude || pi, ["processTreeCancellation"] = true,
                 ["customWorkerPolicyVerified"] = false
             };
         }
@@ -117,7 +117,9 @@ namespace ClaudeCodeWorkbench
                     ["harness"] = "pi", ["executable"] = runtime["node"], ["entry"] = runtime["path"], ["home"] = home,
                     ["workspace"] = request["workspace"], ["model"] = model, ["permissionMode"] = request["permissionMode"],
                     ["sessionId"] = request["sessionId"], ["statePath"] = SessionStatePath("pi", (string)request["sessionId"] ?? ""),
-                    ["maxTurns"] = request["maxTurns"], ["trustedInstructionPath"] = request["trustedInstructionPath"] });
+                    ["maxTurns"] = request["maxTurns"], ["trustedInstructionPath"] = request["trustedInstructionPath"],
+                    ["policyPath"] = FindPiPolicy((string)runtime["path"]), ["allowedTools"] = request["allowedTools"]?.DeepClone() ?? new JArray(),
+                    ["disallowedTools"] = request["disallowedTools"]?.DeepClone() ?? new JArray() });
                 return new AgentWorkerLaunch { Harness = "pi", Executable = System.Windows.Forms.Application.ExecutablePath,
                     Arguments = new List<string> { "--agent-worker-bridge", configPath } };
             }
@@ -149,8 +151,8 @@ namespace ClaudeCodeWorkbench
             if (harness == "pi")
             {
                 var piMode = ((string)request["permissionMode"] ?? "agent").Trim().ToLowerInvariant();
-                if (!new[] { "readonly", "plan", "full" }.Contains(piMode) || (request["disallowedTools"] as JArray)?.Count > 0)
-                    return "Pi 暂仅支持只读/规划（禁用全部工具）和完整权限（无工作区沙箱）；不支持工作区限定写入、交互审批及工具黑白名单。不会自动提升权限。";
+                if (!new[] { "readonly", "plan", "scoped", "edit", "agent", "full" }.Contains(piMode))
+                    return "Pi 支持只读、规划、限定工具、工作区编辑、Agent 和完整权限；交互审批仍未接入。不会自动提升权限。";
                 if ((request["attachments"] as JArray)?.Count > 0)
                     return "Pi 适配器暂仅支持文字输入，请移除附件，或使用其他核心。";
                 return "";
@@ -277,6 +279,25 @@ namespace ClaudeCodeWorkbench
             var candidates = new[] { (string)Settings()["piEntry"], Environment.GetEnvironmentVariable("CLAUDE_GUI_PI_ENTRY"),
                 Path.Combine(AppContext.BaseDirectory, relative), Path.Combine(AppPaths.ClaudeRoot, relative) };
             return candidates.Select(SafeFullPath).FirstOrDefault(IsExistingExecutable) ?? "";
+        }
+
+        private static string FindPiPolicy(string entry)
+        {
+            var relative = Path.Combine("runtimes", "pi", "workbench-policy.mjs");
+            var candidates = new List<string> { Path.Combine(AppContext.BaseDirectory, relative), Path.Combine(AppPaths.ClaudeRoot, relative) };
+            try
+            {
+                var directory = Path.GetDirectoryName(Path.GetFullPath(entry ?? ""));
+                for (var depth = 0; depth < 8 && !string.IsNullOrWhiteSpace(directory); depth++)
+                {
+                    candidates.Add(Path.Combine(directory, "workbench-policy.mjs"));
+                    directory = Path.GetDirectoryName(directory);
+                }
+            }
+            catch { }
+            var policy = candidates.Select(SafeFullPath).FirstOrDefault(IsExistingExecutable) ?? "";
+            if (policy.Length == 0) throw new FileNotFoundException("Pi 工作区策略扩展缺失；未以不受限模式启动。", relative);
+            return policy;
         }
 
         private static JObject PiDiagnostics(bool probe)

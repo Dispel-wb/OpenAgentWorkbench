@@ -9,7 +9,17 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$python = if ($PythonPath) { $PythonPath } elseif (Test-Path -LiteralPath (Join-Path $root '.venv\Scripts\python.exe')) { Join-Path $root '.venv\Scripts\python.exe' } else { (Get-Command python -ErrorAction Stop).Source }
+function Test-Python([string]$Candidate) {
+    if (-not $Candidate -or -not (Test-Path -LiteralPath $Candidate -PathType Leaf)) { return $false }
+    try { & $Candidate -c 'import sys; raise SystemExit(0)' *> $null; return $LASTEXITCODE -eq 0 } catch { return $false }
+}
+if ($PythonPath) {
+    $python = [IO.Path]::GetFullPath($PythonPath)
+    if (-not (Test-Python $python)) { throw "Configured Python is not runnable: $python" }
+} else {
+    $python = @((Join-Path $root '.venv\Scripts\python.exe'), (Get-Command python -ErrorAction SilentlyContinue).Source) | Where-Object { Test-Python $_ } | Select-Object -First 1
+    if (-not $python) { throw 'No runnable Python interpreter was found. Pass -PythonPath.' }
+}
 $isOpenSource = $Edition -eq 'OpenSource'
 $build = Join-Path $root 'build'
 $asset = Join-Path $root 'static\assets\mascot.png'

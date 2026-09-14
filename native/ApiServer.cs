@@ -2546,7 +2546,7 @@ namespace ClaudeCodeWorkbench
                 request["mcpConfigs"] = new JArray();
                 request.Remove("claudeCodeIsolation");
                 request["coreIsolation"] = new JObject { ["core"] = core, ["permissionMode"] = request["permissionMode"], ["enforcedBy"] = "selected-cli", ["workbenchMcpApplied"] = false, ["workbenchAgentDefinitionsApplied"] = false };
-                if (core == "pi") request["coreIsolation"]["enforcedBy"] = (string)request["permissionMode"] == "full" ? "pi-full-access-no-sandbox" : "pi-tools-disabled";
+                if (core == "pi") request["coreIsolation"]["enforcedBy"] = (string)request["permissionMode"] == "full" ? "pi-full-access-no-sandbox" : "pi-workspace-policy-extension";
                 return;
             }
             var mode = ((string)request["permissionMode"] ?? "readonly").ToLowerInvariant();

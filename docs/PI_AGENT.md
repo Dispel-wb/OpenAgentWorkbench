@@ -12,10 +12,13 @@ In **Settings → Workspace → Agent Worker SDK**, choose **Pi Coding Agent (RP
 
 | Setting | Pi behavior |
 |---|---|
-| Readonly / plan | All native tools disabled; text conversation only |
-| Full | Pi read/bash/edit/write/grep/find/ls; **no workspace sandbox or per-call approval** |
-| Agent / edit / manual / scoped | Rejected before execution; no automatic elevation |
-| Disallowed tools or attachments | Rejected; not silently dropped |
+| Readonly / plan | Workspace-scoped read/grep/find/ls |
+| Scoped | Selected file tools, restricted to the workspace; shell is not exposed |
+| Edit / agent | Workspace-scoped read/edit/write/grep/find/ls; shell is not exposed |
+| Full | Pi read/PowerShell/edit/write/grep/find/ls on Windows; **no workspace sandbox or per-call approval** |
+| Manual | Rejected before execution; interactive approval is not yet represented |
+| Disallowed tools | Removed from the Pi startup allowlist |
+| Attachments | Rejected; not silently dropped |
 | OpenAI text provider | Native Chat Completions, Bearer authentication |
 | Anthropic text provider | Native Messages, x-api-key authentication |
 | Non-native explicit auth style | Rejected before launching Pi |
@@ -25,7 +28,7 @@ In **Settings → Workspace → Agent Worker SDK**, choose **Pi Coding Agent (RP
 | Next message / process restart | Resume the native session file |
 | Unexpected process loss | Fail closed; do not replay potentially side-effecting input |
 
-Pi starts without automatic extensions, context-file discovery, skills, prompt templates or themes. Workbench-approved instruction text is passed explicitly. Workbench MCP servers and agent definitions are not represented as enforced Pi policy. Pi startup network work and telemetry are disabled. API credentials are passed through the process environment, not command arguments or models.json; this is not OS-level isolation from other same-user processes.
+Pi starts without automatic project/user extensions, context-file discovery, skills, prompt templates or themes. A bundled Workbench policy extension is loaded explicitly for every non-Full run. It canonicalizes file targets, blocks paths outside the selected workspace, and protects `.git` and `.claude-gui-v2` writes. This is a fail-closed application policy, not an OS security boundary; PowerShell is therefore exposed only in Full mode. Workbench-approved instruction text is passed explicitly. Workbench MCP servers and agent definitions are not represented as enforced Pi policy. Pi startup network work and telemetry are disabled. API credentials are passed through the process environment, not command arguments or models.json; this is not OS-level isolation from other same-user processes.
 
 State pointers live in the workspace's `.claude-gui-v2/worker-sessions/pi/`, with native sessions in adjacent per-conversation directories. Each workbench turn starts a fresh Pi process and resumes its session. Missing session files produce a visible error rather than silently dropping history. Retry and automatic compaction are disabled for this first adapter; errors remain visible. Each turn uses the workbench maximum-turn guard.
 

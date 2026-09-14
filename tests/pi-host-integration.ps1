@@ -114,12 +114,12 @@ try {
     Assert-PiSoakArtifacts
     $jobIds=@()
     $denials=0
-    foreach($mode in @('agent','edit','manual','scoped',' Manual ')){
+    foreach($mode in @('manual',' Manual ')){
         $rejected=$false
         try{Post '/api/chat/start' @{workerHarness='pi';permissionMode=$mode;prompt='must reject'}|Out-Null}catch{$rejected=$_.ErrorDetails.Message-match'worker_capability_unsupported'}
         if(-not$rejected){throw "Pi accepted unsupported permission: $mode"};$denials++
     }
-    foreach($extra in @(@{attachments=@(@{name='fixture.png';type='image'})},@{disallowedTools=@('Bash')})){
+    foreach($extra in @(@{attachments=@(@{name='fixture.png';type='image'})})){
         $body=@{workerHarness='pi';permissionMode='readonly';prompt='must reject'};foreach($key in $extra.Keys){$body[$key]=$extra[$key]}
         $rejected=$false;try{Post '/api/chat/start' $body|Out-Null}catch{$rejected=$_.ErrorDetails.Message-match'worker_capability_unsupported'}
         if(-not$rejected){throw 'Pi ignored an unsupported attachment/tool restriction'};$denials++
@@ -131,10 +131,10 @@ try {
         do {Start-Sleep -Milliseconds 150;$poll=Invoke-RestMethod "$hostBase/api/chat/poll/$($jobId)?after=$($chat.eventCursor)" -Headers $headers;$terminal=@($poll.lines|ForEach-Object{$_|ConvertFrom-Json}|Where-Object type -eq result)}while(($terminal.Count-eq 0-or$poll.status.state-notin@('completed','failed','cancelled'))-and(Get-Date)-lt$deadline)
         if($terminal.Count-eq 0-or$terminal[-1].is_error-or$poll.status.state-ne'completed'){throw ('Pi Host round failed: '+($poll|ConvertTo-Json -Depth 20 -Compress))}
         $stored=Get-Content -LiteralPath (Join-Path $root ".claude-gui-v2/runs/$jobId/request.json") -Raw|ConvertFrom-Json
-        if($stored.permissionBrokerEnabled-or$stored.coreIsolation.enforcedBy-ne'pi-tools-disabled'){throw 'Pi permission metadata does not match enforcement'}
+        if($stored.permissionBrokerEnabled-or$stored.coreIsolation.enforcedBy-ne'pi-workspace-policy-extension'){throw 'Pi permission metadata does not match enforcement'}
     }
     $apiRequest=Get-Content -LiteralPath ($portFile+'.request.json') -Raw|ConvertFrom-Json
-    if($apiRequest.tools.Count-gt 0){throw 'Readonly Pi exposed native tools'}
+    if((@($apiRequest.tools.function.name|Sort-Object)-join ',')-ne'find,grep,ls,read'){throw 'Readonly Pi tool allowlist is incorrect'}
     if(@($apiRequest.messages|Where-Object role -eq user).Count-lt 2){throw 'Pi Host lost conversation history'}
     $chat=Post '/api/chat/start' @{workspace=$root;workerHarness='pi';permissionMode='readonly';providerId='pi-fixture';model='fixture-model';prompt='PI_HOST_HANG';sessionId=[guid]::NewGuid().ToString()}
     $jobId=$chat.jobId;$jobIds+=$jobId;$deadline=(Get-Date).AddSeconds(15)
