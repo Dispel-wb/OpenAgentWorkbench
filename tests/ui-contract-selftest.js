@@ -58,18 +58,22 @@ if (!bare.includes('local-document-link') || !bare.includes('结果.docx')) {
 
 let prevented = false;
 app.selectedTextWithinMessage = () => '用户选中的要求';
-app.openSelectionMenu({ role: 'user' }, { clientX: 100, clientY: 120, preventDefault() { prevented = true; } });
-if (!prevented || !app.contextMenu.show || app.contextMenu.role !== 'user') {
-  throw new Error('User-message selection does not open the quote/copy/export menu');
+app.openSelectionMenu({ id:'message-1',role: 'user' }, { clientX: 100, clientY: 120, preventDefault() { prevented = true; } });
+if (!prevented || !app.contextMenu.show || app.contextMenu.role !== 'user' || app.contextMenu.messageId !== 'message-1') {
+  throw new Error('User-message selection does not open the quote/copy/export/delete menu');
 }
 
 const html = fs.readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
-const actionBlock = html.match(/<div v-if="!message\.streaming" class="message-actions">([\s\S]*?)<\/div>\s*<\/div>/)?.[1] || '';
-if (!actionBlock.includes('quoteMessage') || actionBlock.includes('copyMessage') || actionBlock.includes('exportMessage')) {
-  throw new Error('Message footer actions do not match the compact quote-only contract');
+const actionBlock = html.match(/<div v-if="!message\.streaming&&\(canRegenerate\(message\)\|\|message\.variants\?\.length>1\)" class="message-actions">([\s\S]*?)<\/div>\s*<\/div>/)?.[1] || '';
+if (!actionBlock.includes('regenerateMessage') || actionBlock.includes('quoteMessage') || actionBlock.includes('deleteMessage')) {
+  throw new Error('Message footer must retain regeneration only, without quote or delete controls');
 }
-if (!html.includes('exportContextSelection') || !html.includes('copyContextSelection') || !html.includes('quoteContextSelection')) {
+if (!html.includes('exportContextSelection') || !html.includes('copyContextSelection') || !html.includes('quoteContextSelection') || !html.includes('deleteContextMessage') || html.includes('class="message-delete"')) {
   throw new Error('Selection context menu is incomplete');
+}
+const css = fs.readFileSync(path.join(root, 'static', 'styles.css'), 'utf8');
+if (!css.includes('--option-surface:#17243a') || !css.includes('html[data-edition="local"][data-skin="claude"]{--option-surface:#2b211e') || !css.includes('.settings-content :is(.capability-card') || !appSource.includes("dataset.edition=this.isOpenSource?'opensource':'local'")) {
+  throw new Error('Settings option surfaces are not consistently blue with a Claude-only brown override');
 }
 if (!html.includes('run-evidence-card') || !html.includes('Context 来源') || !html.includes('Artifacts') || !html.includes('Tool 执行证据')) {
   throw new Error('Per-run context and artifact evidence card is missing');
@@ -287,9 +291,9 @@ console.log(JSON.stringify({
   localPdfCard: true,
   localOfficeCard: true,
   bareAbsolutePath: true,
-  userMessageQuote: true,
-  footerCopyExportHidden: true,
-  selectionMenu: ['copy', 'quote', 'export'],
+  selectionQuoteRequiresSelection: true,
+  footerQuoteDeleteHidden: true,
+  selectionMenu: ['copy', 'quote', 'export', 'delete'],
   runEvidenceCard: true,
   contextBudgetPreflight: true,
   providerHealthEvidence: true,

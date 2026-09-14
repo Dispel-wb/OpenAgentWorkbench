@@ -156,6 +156,17 @@ async function main() {
     if (runtimeLimits.value !== 100 || runtimeLimits.panelWidth < 300 || runtimeLimits.overflow > 1) throw new Error('Agent runtime limits control is invalid');
     const startupLayout=await page.evaluate(()=>{const panel=document.querySelector('.startup-behavior'),input=panel?.querySelector('input'),toggle=panel?.querySelector('.switch span');return{width:panel?.getBoundingClientRect().width||0,overflow:panel?panel.scrollWidth-panel.clientWidth:999,text:panel?.textContent?.trim()||'',checked:!!input?.checked,toggleWidth:toggle?.getBoundingClientRect().width||0};});
     if(startupLayout.width<300||startupLayout.overflow>1||!startupLayout.text.includes('登录后保持 Agent Host')||startupLayout.checked||startupLayout.toggleWidth<32)throw new Error('Host-only login startup control is invalid: '+JSON.stringify(startupLayout));
+    const settingsOptionColors=await page.evaluate(()=>{
+      const rgb=()=>getComputedStyle(document.querySelector('.startup-behavior')).backgroundColor.match(/\d+(?:\.\d+)?/g).slice(0,3).map(Number);
+      const edition=document.documentElement.dataset.edition;
+      document.documentElement.dataset.skin='fusion';document.documentElement.dataset.theme='dark';const fusionDark=rgb();
+      document.documentElement.dataset.theme='light';const fusionLight=rgb();
+      document.documentElement.dataset.skin='claude';const claude=rgb();
+      document.documentElement.dataset.skin='fusion';document.documentElement.dataset.theme='dark';
+      return{edition,fusionDark,fusionLight,claude};
+    });
+    const blue=values=>values[2]>values[0]&&values[2]>values[1],brown=values=>values[0]>values[2]&&values[1]>values[2];
+    if(!blue(settingsOptionColors.fusionDark)||!blue(settingsOptionColors.fusionLight)||(settingsOptionColors.edition==='local'?!brown(settingsOptionColors.claude):!blue(settingsOptionColors.claude)))throw new Error('Settings option theme colors violate the Open/Codex/mixed blue and local-Claude brown contract: '+JSON.stringify(settingsOptionColors));
     await page.evaluate(()=>document.querySelector('.startup-behavior input')?.click());
     await page.waitForFunction(()=>document.querySelector('.startup-behavior input')?.checked===true);
     const startupEnabledResponse=await request.get(baseUrl+'/api/workbench/startup'),startupEnabled=await startupEnabledResponse.json();
@@ -200,6 +211,17 @@ async function main() {
     await racePage.locator('.session-entry').filter({hasText:'Race A'}).locator('.session-item').click();await racePage.waitForTimeout(30);await racePage.locator('.session-entry').filter({hasText:'Race B'}).locator('.session-item').click();await racePage.waitForTimeout(1500);
     const raceResult=await racePage.evaluate(()=>({activeTitle:document.querySelector('.session-entry.active .session-title')?.textContent?.trim()||'',conversation:document.querySelector('.conversation')?.textContent||'',switching:document.querySelector('.conversation')?.getAttribute('aria-busy')||''}));
     if(raceResult.activeTitle!=='Race B'||!raceResult.conversation.includes('race-b-text')||raceResult.conversation.includes('race-a-text'))throw new Error('Rapid session switching mixed or replaced conversation messages');
+    const userMessage=racePage.locator('.message.user').filter({hasText:'race-b-text'});
+    if(await userMessage.locator('.message-delete').count()||await userMessage.getByText('引用提问',{exact:true}).count())throw new Error('Message still exposes the removed red delete or footer quote control');
+    await userMessage.locator('.message-body').click({button:'right'});
+    const deleteOnly=await racePage.locator('.selection-menu button').allTextContents();
+    if(JSON.stringify(deleteOnly)!==JSON.stringify(['删除消息']))throw new Error('Right-click without a selection must expose delete only: '+JSON.stringify(deleteOnly));
+    await racePage.keyboard.press('Escape');
+    await userMessage.locator('.message-body').evaluate(element=>{const node=element.querySelector('span')?.firstChild;if(!node)return;const range=document.createRange();range.selectNodeContents(node);const selection=getSelection();selection.removeAllRanges();selection.addRange(range);element.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:300,clientY:300}));});
+    await racePage.locator('.selection-menu').waitFor({state:'visible'});
+    const selectionActions=await racePage.locator('.selection-menu button').allTextContents();
+    if(JSON.stringify(selectionActions)!==JSON.stringify(['复制','引用','导出 TXT','删除消息']))throw new Error('Selected-text context actions are incomplete: '+JSON.stringify(selectionActions));
+    await racePage.keyboard.press('Escape');
     await racePage.screenshot({path:path.join(outputDir,'ui-session-switch-race.png')});await raceContext.close();
 
     const pollingPaths=['/api/workbench/activity','/api/chat/runs','/api/permissions/pending','/api/task-queue'];
@@ -212,7 +234,7 @@ async function main() {
     await activePage.route('**/api/chat/runs',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([{id:'polling-active-fixture',kind:'chat',sessionId:'unopened-polling-session',workspace,state:'running',isActive:true,eventCursor:0,elapsedMs:1000,model:'offline'}])}));
     const activePolling=await observePolling(activePage,3400);await activeContext.close();
     if(activePolling['/api/workbench/activity']<3||activePolling['/api/chat/runs']<2||activePolling['/api/permissions/pending']<2||activePolling['/api/task-queue']<1)throw new Error('Legacy polling fallback did not recover after activity-channel failure: '+JSON.stringify(activePolling));
-    process.stdout.write(JSON.stringify({ responsiveUi: 'PASS', results, lightTheme, reducedMotion, runCenter, approvalLayout, memoryLayout, memoryEditor, memoryLight, runtimeLimits, startupLayout, startupRegistration:'PASS', dialogAccessibility:{settings:true,focusTrap:true,focusReturn:true,palette:true}, rapidSessionSwitch:'PASS',activitySync:{idle:idlePolling,fallback:activePolling} }, null, 2));
+    process.stdout.write(JSON.stringify({ responsiveUi: 'PASS', results, lightTheme, reducedMotion, runCenter, approvalLayout, memoryLayout, memoryEditor, memoryLight, runtimeLimits, startupLayout, settingsOptionColors, startupRegistration:'PASS', dialogAccessibility:{settings:true,focusTrap:true,focusReturn:true,palette:true}, rapidSessionSwitch:'PASS',messageContextMenu:{deleteOnly,selectionActions},activitySync:{idle:idlePolling,fallback:activePolling} }, null, 2));
   } finally { await browser.close(); }
 }
 

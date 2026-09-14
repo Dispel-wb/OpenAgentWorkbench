@@ -206,3 +206,24 @@ html[data-theme="light"] .starter-grid button{color:var(--text-2);border-bottom-
 .workflow-dialog legend{padding:0 6px;color:var(--text-2)}
 .workflow-fields{grid-template-columns:minmax(100px,1fr) minmax(0,2fr) minmax(0,1.5fr);gap:16px}
 @media(max-width:700px){.workflow-fields{grid-template-columns:1fr}.workflow-dialog>.modal-scroll{padding:14px}}
+
+/* Settings option surfaces are deep blue in Open Agent, Codex and mixed skins.
+   The local Claude skin is the only intentionally warm-brown variant. */
+:root{--option-surface:#17243a;--option-surface-strong:#1d2e4b;--option-border:#35527c;--option-text:#edf4ff;--option-muted:#a9b9d3}
+html[data-edition="local"][data-skin="claude"]{--option-surface:#2b211e;--option-surface-strong:#382a25;--option-border:#5a4035;--option-text:#f4e9e2;--option-muted:#c7aaa0}
+.settings-content :is(select,input,textarea) option{background:var(--option-surface);color:var(--option-text)}
+.settings-content :is(.capability-card,.appearance-cards>button,.skin-card-wrap,.workspace-settings-list>div,.claude-runtime-card,.agent-runtime-limits,.startup-behavior,.model-capability-matrix,.provider-health-panel,.update-channel-section),.settings-content :is(input:not([type="checkbox"]),select,textarea){border-color:var(--option-border);background:var(--option-surface);color:var(--option-text)}
+.settings-content :is(.appearance-cards>button,.skin-card-wrap,.workspace-settings-list>div,.capability-card):hover{border-color:color-mix(in srgb,var(--blue) 72%,var(--option-border));background:var(--option-surface-strong)}
+.settings-content :is(.appearance-cards>button,.skin-card-wrap).active{background:var(--option-surface-strong)}
+.settings-content :is(.appearance-cards>button,.skin-card-wrap,.workspace-settings-list>div,.capability-card) :is(span,p,small,code),.settings-content :is(input,select,textarea)::placeholder{color:var(--option-muted)}
+.settings-content :is(.capability-body,.startup-behavior,.provider-autofill,.model-validation-row,.provider-health-row,.model-capability-matrix-list>div){border-color:var(--option-border);background:var(--option-surface-strong)}
+.settings-content input[type="checkbox"]{accent-color:var(--option-border)}
+.settings-content .switch span{border:1px solid var(--option-border);background:var(--option-surface-strong)}
+.settings-content .switch input:checked+span{background:var(--option-border)}
+.settings-content .switch span:after,.settings-content .switch input:checked+span:after{background:var(--option-muted)}
+.settings-content .theme-swatch.dark,.settings-content .skin-swatch{background:var(--option-surface)}
+.selection-menu{width:288px;grid-template-columns:repeat(4,1fr);border-color:var(--option-border);background:var(--option-surface)}
+.selection-menu.delete-only{width:96px;grid-template-columns:1fr}
+.selection-menu button{color:var(--option-text)}
+.selection-menu button:hover{background:var(--option-surface-strong);color:#fff}
+.selection-menu button.danger{color:#efaaa3}
