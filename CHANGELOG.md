@@ -2,6 +2,7 @@
 
 ## Unreleased — 1.0.0 readiness work
 
+- Fixed Local file attachment selection after credentials are cleared: the picker now follows the selected Worker capability instead of API/model readiness. Claude, Codex and DSHarness can select local files without an imported Provider; Pi remains explicitly disabled until its adapter supports attachments.
 - Unified settings, peripheral controls, empty archive states and the complete developer workbench chrome on a cool blue family for Open Agent, Codex and mixed skins. Dark mode keeps deep navy fills; light mode uses pale blue fills. This includes secondary buttons, native select groups, panels, dividers, file-tree glyphs, API capability cards, text and matched inner/outer focus frames; only the Local Claude skin retains the warm-brown treatment.
 - Moved per-message deletion exclusively to the right-click menu, removed the message-header red ×, and limited quoting to selected text through that same menu; regeneration and answer-version controls remain available.
 - Fixed recursive workspace snapshots by excluding `.claude-gui-v2` and `.git` at every depth during snapshot, change detection and rollback; stale nested run snapshots can no longer recursively copy Workbench state into themselves.

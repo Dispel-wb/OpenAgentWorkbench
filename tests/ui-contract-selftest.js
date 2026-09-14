@@ -43,6 +43,14 @@ const app = { ...Object.assign({},...definition.mixins.map(m=>m.data()),...defin
 const codexOnly = {settings:{workerHarness:'codex',model:''},providers:[],agentRuntime:{selected:'codex'},selectedProvider:null};
 codexOnly.workerUsesOwnModel = definition.computed.workerUsesOwnModel.call(codexOnly);
 if (!definition.computed.textRouteReady.call(codexOnly)) throw new Error('Codex-only fresh install must not require an imported Provider.');
+for (const harness of ['claude','codex','dsh']) {
+  const attachmentState={settings:{workerHarness:harness},agentRuntime:{selected:harness}};
+  attachmentState.selectedWorkerHarness=definition.computed.selectedWorkerHarness.call(attachmentState);
+  if (!definition.computed.canAttachFiles.call(attachmentState)) throw new Error(`${harness} must allow local file selection without requiring an imported Provider.`);
+}
+const piAttachmentState={settings:{workerHarness:'pi'},agentRuntime:{selected:'pi'}};
+piAttachmentState.selectedWorkerHarness=definition.computed.selectedWorkerHarness.call(piAttachmentState);
+if (definition.computed.canAttachFiles.call(piAttachmentState)) throw new Error('Pi must keep file attachments disabled until its adapter supports them.');
 const pdf = app.renderMarkdown('[季度报告](D:\\docs\\季度报告.pdf)');
 const office = app.renderMarkdown('请查看 `D:\\docs\\预算表.xlsx`');
 const bare = app.renderMarkdown('输出位于 D:\\work\\Claude\\结果.docx。');
