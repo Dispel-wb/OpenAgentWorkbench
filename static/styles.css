@@ -304,3 +304,25 @@ html:not([data-edition="local"][data-skin="claude"]) .inspector :is(.git-files c
 html:not([data-edition="local"][data-skin="claude"]) .inspector .usage-bars i{background:#5275a8}
 html:not([data-edition="local"][data-skin="claude"]) .inspector :is(.git-files span,.search-results b,.extension-list b,.checkpoint-list b,.schedule-list span,.health-card code){color:var(--workbench-text)}
 html:not([data-edition="local"][data-skin="claude"]) .inspector :is(.search-results span,.search-results small,.extension-list code,.tag-cloud small,.usage-bars label,.checkpoint-list small,.schedule-list small,.health-card span,.permission-config label,.permission-config p){color:var(--workbench-muted)}
+
+/* Light themes keep the same cool hue, but use light control fills instead of the
+   dark-theme navy surfaces. The local Claude skin remains independently warm. */
+html:not([data-edition="local"][data-skin="claude"])[data-theme="light"]{
+  --option-surface:#edf3fc;--option-surface-strong:#e1ebf9;--option-border:#9bb5da;--option-text:#213a60;--option-muted:#5d7397;
+  --workbench-bg:#f4f7fc;--workbench-panel:#eaf1fa;--workbench-control:#e2ecf9;--workbench-control-strong:#d5e3f6;--workbench-border:#9db7da;--workbench-text:#203958;--workbench-muted:#567094;--workbench-quiet:#7186a3;
+}
+html:not([data-edition="local"][data-skin="claude"]) :is(.secondary,.modal-close,.new-provider){border-color:var(--option-border);background:var(--option-surface-strong);color:var(--option-text)}
+html:not([data-edition="local"][data-skin="claude"]) :is(.secondary,.modal-close,.new-provider):hover{border-color:#6d9cff;background:color-mix(in srgb,var(--option-surface-strong) 82%,#6d9cff);color:var(--option-text)}
+html:not([data-edition="local"][data-skin="claude"]) .settings-content optgroup{background:var(--option-surface-strong);color:var(--option-text)}
+html:not([data-edition="local"][data-skin="claude"]) .settings-content option:checked{background:linear-gradient(var(--option-surface-strong),var(--option-surface-strong));color:var(--option-text)}
+html:not([data-edition="local"][data-skin="claude"]) .settings-content :is(.settings-pane-title p,.archive-toolbar p,.update-channel-status){color:var(--option-muted)}
+html:not([data-edition="local"][data-skin="claude"]) .archive-clear{border-color:var(--option-border);background:var(--option-surface-strong);color:var(--option-text)}
+html:not([data-edition="local"][data-skin="claude"]) .archive-browser{border-color:var(--option-border);background:var(--option-surface)}
+html:not([data-edition="local"][data-skin="claude"]) :is(.archive-list,.archive-preview){background:var(--option-surface)}
+html:not([data-edition="local"][data-skin="claude"]) :is(.archive-list,.archive-row,.archive-preview>header,.archive-toolbar){border-color:var(--option-border)}
+html:not([data-edition="local"][data-skin="claude"]) :is(.archive-empty,.archive-preview-empty){color:var(--option-muted)}
+html:not([data-edition="local"][data-skin="claude"]) .archive-preview-empty span{color:#7ba7ed}
+html:not([data-edition="local"][data-skin="claude"]) :is(.archive-row:hover,.archive-row.active){background:var(--option-surface-strong)}
+html:not([data-edition="local"][data-skin="claude"]) :is(.archive-row b,.archive-preview>header b,.archive-message p){color:var(--option-text)}
+html:not([data-edition="local"][data-skin="claude"]) :is(.archive-row small,.archive-preview>header small,.archive-message small){color:var(--option-muted)}
+html:not([data-edition="local"][data-skin="claude"]) :is(.archive-row-actions button,.archive-preview>header button){border-color:var(--option-border);background:var(--option-surface-strong);color:var(--option-text)}
