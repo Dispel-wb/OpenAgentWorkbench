@@ -227,3 +227,52 @@ html[data-edition="local"][data-skin="claude"]{--option-surface:#2b211e;--option
 .selection-menu button{color:var(--option-text)}
 .selection-menu button:hover{background:var(--option-surface-strong);color:#fff}
 .selection-menu button.danger{color:#efaaa3}
+
+/* Cold-control contract: every Open Agent surface and every local skin except the
+   explicit Claude skin uses one blue family for controls, borders, glyphs and copy. */
+html:not([data-edition="local"][data-skin="claude"]){
+  --claude:#6d9cff;--claude-bright:#8bb1ff;--claude-soft:#17243a;--blue:#78a8ff;
+}
+html:not([data-edition="local"][data-skin="claude"]) ::selection{background:#35527c;color:#fff}
+html:not([data-edition="local"][data-skin="claude"]) .selectors label>span{color:var(--option-muted)}
+html:not([data-edition="local"][data-skin="claude"]) .selectors select,
+html:not([data-edition="local"][data-skin="claude"]) .selectors label:first-child select{
+  border-color:var(--option-border);background:var(--option-surface);color:var(--option-text);box-shadow:none;
+}
+html:not([data-edition="local"][data-skin="claude"]) .selectors select:hover{border-color:#5275a8;background:var(--option-surface-strong)}
+html:not([data-edition="local"][data-skin="claude"]) .selectors select:focus{
+  border-color:#6d9cff;box-shadow:0 0 0 2px color-mix(in srgb,#6d9cff 22%,transparent);
+}
+html:not([data-edition="local"][data-skin="claude"]) .selectors option{background:var(--option-surface);color:var(--option-text)}
+html:not([data-edition="local"][data-skin="claude"]) .workbench-tools button:hover,
+html:not([data-edition="local"][data-skin="claude"]) .inspector>header nav button.active{
+  border-color:var(--option-border);background:var(--option-surface-strong);color:var(--option-text);
+}
+html:not([data-edition="local"][data-skin="claude"]) .pane-toolbar{border-color:var(--option-border)}
+html:not([data-edition="local"][data-skin="claude"]) .pane-toolbar code{color:var(--option-muted)}
+html:not([data-edition="local"][data-skin="claude"]) :is(.pane-toolbar button,.editor-panel header button){
+  border-color:var(--option-border);background:var(--option-surface);color:var(--option-text);
+}
+html:not([data-edition="local"][data-skin="claude"]) .tree-list{border-color:var(--option-border)}
+html:not([data-edition="local"][data-skin="claude"]) .tree-list button{color:var(--option-text)}
+html:not([data-edition="local"][data-skin="claude"]) .tree-list button:hover,
+html:not([data-edition="local"][data-skin="claude"]) .tree-list button.active{background:var(--option-surface-strong);color:#fff}
+html:not([data-edition="local"][data-skin="claude"]){
+  --tree-glyph:#82adf2;--tree-size:#91a7c8;
+}
+html:not([data-edition="local"][data-skin="claude"]) .tree-list i{color:var(--tree-glyph)}
+html:not([data-edition="local"][data-skin="claude"]) .tree-list small{color:var(--tree-size)}
+html:not([data-edition="local"][data-skin="claude"]) .settings-content :is(.cap-icon,.cap-icon.image){
+  border-color:var(--option-border);background:var(--option-surface-strong);color:#9fc0ff;
+}
+html:not([data-edition="local"][data-skin="claude"]) .settings-content :is(.provider-autofill span,.settings-pane-title h3,.capability-head h3){color:var(--option-text)}
+html:not([data-edition="local"][data-skin="claude"]) .settings-content :is(.modal-scroll>label,.form-grid label,.model-row label,.api-settings-pane>label,.provider-autofill label,.capability-head p){color:var(--option-muted)}
+html:not([data-edition="local"][data-skin="claude"]) .settings-content :is(.provider-autofill button,.model-row button,.new-provider){
+  border-color:var(--option-border);background:var(--option-surface-strong);color:var(--option-text);
+}
+html:not([data-edition="local"][data-skin="claude"]) .settings-content :is(input:not([type="checkbox"]),select,textarea):focus{
+  outline:0;border-color:#6d9cff;box-shadow:0 0 0 2px color-mix(in srgb,#6d9cff 22%,transparent);
+}
+html:not([data-edition="local"][data-skin="claude"]) .settings-content .switch input:checked+span{border-color:#5275a8;background:#5275a8}
+html:not([data-edition="local"][data-skin="claude"]) .settings-content .switch span:after,
+html:not([data-edition="local"][data-skin="claude"]) .settings-content .switch input:checked+span:after{background:#eaf2ff}

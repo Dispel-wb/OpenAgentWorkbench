@@ -2,7 +2,7 @@
 
 ## Unreleased — 1.0.0 readiness work
 
-- Unified settings option surfaces on deep blue for Open Agent, Codex and mixed skins in both light and dark modes; only the Local Claude skin retains the warm-brown treatment.
+- Unified settings and peripheral control surfaces on deep blue for Open Agent, Codex and mixed skins in both light and dark modes, including top selectors, file-tree glyphs, API capability cards, text and matched inner/outer focus frames; only the Local Claude skin retains the warm-brown treatment.
 - Moved per-message deletion exclusively to the right-click menu, removed the message-header red ×, and limited quoting to selected text through that same menu; regeneration and answer-version controls remain available.
 - Fixed recursive workspace snapshots by excluding `.claude-gui-v2` and `.git` at every depth during snapshot, change detection and rollback; stale nested run snapshots can no longer recursively copy Workbench state into themselves.
 - Expanded Pi 0.85.1 on Windows: read/plan now expose workspace-scoped read/search/list tools, edit/agent expose workspace-scoped file edits, scoped mode honors its file-tool allowlist, and Full uses Pi's actual `powershell` tool instead of the unavailable `bash` name.

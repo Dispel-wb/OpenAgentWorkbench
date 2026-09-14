@@ -119,6 +119,11 @@ async function main() {
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.setViewportSize({ width: 826, height: 720 });
     await page.locator('.sidebar-actions button').filter({hasText:'开发工作台'}).click();
+    await page.locator('.tree-list button').first().waitFor({state:'visible'});
+    const coldFileControls=await page.evaluate(()=>{const numbers=(selector,property)=>{const value=getComputedStyle(document.querySelector(selector))[property];return(value.match(/\d+(?:\.\d+)?/g)||[]).slice(0,3).map(Number);};return{edition:document.documentElement.dataset.edition,skin:document.documentElement.dataset.skin,selectorBackground:numbers('.provider-selector select','backgroundColor'),selectorBorder:numbers('.provider-selector select','borderTopColor'),treeText:numbers('.tree-list button','color'),treeGlyph:numbers('.tree-list i','color')};});
+    const isBlue=values=>values.length===3&&values[2]>values[0]&&values[2]>values[1];
+    if(!isBlue(coldFileControls.selectorBackground)||!isBlue(coldFileControls.selectorBorder)||!isBlue(coldFileControls.treeText)||!isBlue(coldFileControls.treeGlyph))throw new Error('Peripheral selectors or file controls retain a warm color: '+JSON.stringify(coldFileControls));
+    await page.screenshot({path:path.join(outputDir,'ui-cold-file-controls.png')});
     await page.locator('.inspector>header nav button').filter({hasText:'运行'}).click();
     await page.locator('.run-card').waitFor({state:'visible'});
     const runCenter=await page.evaluate(()=>{const pane=document.querySelector('.runs-pane'),card=document.querySelector('.run-card'),trigger=document.querySelector('.run-center-trigger');return{paneWidth:pane?.getBoundingClientRect().width||0,paneOverflow:pane?pane.scrollWidth-pane.clientWidth:999,cardWidth:card?.getBoundingClientRect().width||0,triggerText:trigger?.textContent?.trim()||'',cardText:card?.textContent?.trim()||''};});
@@ -175,6 +180,13 @@ async function main() {
     await page.screenshot({ path: path.join(outputDir, 'ui-responsive-startup-setting.png') });
     await page.evaluate(()=>document.querySelector('.startup-behavior input')?.click());
     await page.waitForFunction(()=>document.querySelector('.startup-behavior input')?.checked===false);
+    await page.locator('.settings-nav button').filter({hasText:'API 设置'}).click();
+    await page.locator('.cap-icon').first().waitFor({state:'visible'});
+    const apiControlColors=await page.evaluate(()=>{const color=(selector,property)=>{const value=getComputedStyle(document.querySelector(selector))[property];return(value.match(/\d+(?:\.\d+)?/g)||[]).slice(0,3).map(Number);};const read=()=>({inputBackground:color('.api-settings-pane input','backgroundColor'),inputBorder:color('.api-settings-pane input','borderTopColor'),iconBackground:color('.cap-icon','backgroundColor'),iconBorder:color('.cap-icon','borderTopColor'),iconText:color('.cap-icon','color'),heading:color('.capability-head h3','color')});const edition=document.documentElement.dataset.edition;document.documentElement.dataset.skin='fusion';const fusion=read();document.documentElement.dataset.skin='claude';const claude=read();document.documentElement.dataset.skin='fusion';return{edition,fusion,claude};});
+    const coldControl=value=>value.length===3&&value[2]>value[0]&&value[2]>value[1],warmControl=value=>value.length===3&&value[0]>value[2]&&value[1]>value[2];
+    const allCold=value=>Object.values(value).every(coldControl),allWarm=value=>warmControl(value.inputBackground)&&warmControl(value.inputBorder)&&warmControl(value.iconBackground)&&warmControl(value.iconBorder);
+    if(!allCold(apiControlColors.fusion)||(apiControlColors.edition==='local'?!allWarm(apiControlColors.claude):!allCold(apiControlColors.claude)))throw new Error('API input, frame, icon or text colors violate the cold-control contract: '+JSON.stringify(apiControlColors));
+    await page.screenshot({path:path.join(outputDir,'ui-api-control-colors.png')});
     const dialogAccessibility=await page.evaluate(()=>{const dialog=document.querySelector('.provider-modal');return{role:dialog?.getAttribute('role')||'',modal:dialog?.getAttribute('aria-modal')||'',labelledBy:dialog?.getAttribute('aria-labelledby')||'',focusInside:!!dialog?.contains(document.activeElement),focusTag:document.activeElement?.tagName||''};});
     if(dialogAccessibility.role!=='dialog'||dialogAccessibility.modal!=='true'||!dialogAccessibility.labelledBy||!dialogAccessibility.focusInside)throw new Error('Settings dialog semantics or initial focus are incomplete: '+JSON.stringify(dialogAccessibility));
     const focusBoundary=await page.evaluate(()=>{const root=document.querySelector('.provider-modal'),items=[...root.querySelectorAll('button,input,select,textarea,a[href],[tabindex]:not([tabindex="-1"])')].filter(item=>!item.disabled&&item.getClientRects().length);items.at(-1)?.focus();return{first:items[0]?.outerHTML.slice(0,100)||'',last:items.at(-1)?.outerHTML.slice(0,100)||''};});
@@ -234,7 +246,7 @@ async function main() {
     await activePage.route('**/api/chat/runs',route=>route.fulfill({status:200,contentType:'application/json',body:JSON.stringify([{id:'polling-active-fixture',kind:'chat',sessionId:'unopened-polling-session',workspace,state:'running',isActive:true,eventCursor:0,elapsedMs:1000,model:'offline'}])}));
     const activePolling=await observePolling(activePage,3400);await activeContext.close();
     if(activePolling['/api/workbench/activity']<3||activePolling['/api/chat/runs']<2||activePolling['/api/permissions/pending']<2||activePolling['/api/task-queue']<1)throw new Error('Legacy polling fallback did not recover after activity-channel failure: '+JSON.stringify(activePolling));
-    process.stdout.write(JSON.stringify({ responsiveUi: 'PASS', results, lightTheme, reducedMotion, runCenter, approvalLayout, memoryLayout, memoryEditor, memoryLight, runtimeLimits, startupLayout, settingsOptionColors, startupRegistration:'PASS', dialogAccessibility:{settings:true,focusTrap:true,focusReturn:true,palette:true}, rapidSessionSwitch:'PASS',messageContextMenu:{deleteOnly,selectionActions},activitySync:{idle:idlePolling,fallback:activePolling} }, null, 2));
+    process.stdout.write(JSON.stringify({ responsiveUi: 'PASS', results, lightTheme, reducedMotion, coldFileControls, runCenter, approvalLayout, memoryLayout, memoryEditor, memoryLight, runtimeLimits, startupLayout, settingsOptionColors, apiControlColors, startupRegistration:'PASS', dialogAccessibility:{settings:true,focusTrap:true,focusReturn:true,palette:true}, rapidSessionSwitch:'PASS',messageContextMenu:{deleteOnly,selectionActions},activitySync:{idle:idlePolling,fallback:activePolling} }, null, 2));
   } finally { await browser.close(); }
 }
 
