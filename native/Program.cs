@@ -456,10 +456,35 @@ namespace ClaudeCodeWorkbench
         public static void WriteAtomic(string path, JToken value)
         {
             Directory.CreateDirectory(Path.GetDirectoryName(path));
-            var temp = path + ".tmp";
-            File.WriteAllText(temp, value.ToString(Formatting.Indented), new UTF8Encoding(false));
-            if (File.Exists(path)) File.Replace(temp, path, null);
-            else File.Move(temp, path);
+            // Status, heartbeat and reconciliation writers can legitimately target the
+            // same JSON file from different threads. A fixed `.tmp` name lets one
+            // writer open or replace another writer's temporary file, which can turn
+            // an already durable successful result into a spurious sharing violation.
+            var temp = path + "." + Process.GetCurrentProcess().Id + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try
+            {
+                File.WriteAllText(temp, value.ToString(Formatting.Indented), new UTF8Encoding(false));
+                Exception last = null;
+                for (var attempt = 0; attempt < 8; attempt++)
+                {
+                    try
+                    {
+                        if (File.Exists(path)) File.Replace(temp, path, null);
+                        else File.Move(temp, path);
+                        return;
+                    }
+                    catch (Exception error) when (error is IOException || error is UnauthorizedAccessException)
+                    {
+                        last = error;
+                        Thread.Sleep(10 * (attempt + 1));
+                    }
+                }
+                throw new IOException("Atomic JSON replacement failed after retrying transient file contention.", last);
+            }
+            finally
+            {
+                try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+            }
         }
 
         public static string Compact(JToken value) { return value.ToString(Formatting.None); }
