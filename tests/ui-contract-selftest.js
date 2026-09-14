@@ -72,6 +72,13 @@ if (!prevented || !app.contextMenu.show || app.contextMenu.role !== 'user' || ap
 }
 
 const html = fs.readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
+if (!appSource.includes("id: '', preset: '', name: '', token: '', authStyle: 'auto'") ||
+    !appSource.includes('...Object.keys(providerPresets)') || !appSource.includes('probeOnly:true') ||
+    !html.includes('<option disabled value="">自动匹配 / 也可手选</option>')) {
+  throw new Error('New API configuration must probe supported providers without depending on the displayed default');
+}
+if (!appSource.includes("current&&!current.started&&!this.messages.length&&!this.sessionRun(current.id)&&!hasQueued") ||
+    !html.includes('本地版固定使用 D:\\work\\Claude')) throw new Error('Empty-session reuse or Local fixed-workspace UI contract is missing');
 const actionBlock = html.match(/<div v-if="!message\.streaming&&\(canRegenerate\(message\)\|\|message\.variants\?\.length>1\)" class="message-actions">([\s\S]*?)<\/div>\s*<\/div>/)?.[1] || '';
 if (!actionBlock.includes('regenerateMessage') || actionBlock.includes('quoteMessage') || actionBlock.includes('deleteMessage')) {
   throw new Error('Message footer must retain regeneration only, without quote or delete controls');
@@ -174,6 +181,10 @@ if (!apiServer.includes('session_has_background_work') || !appSource.includes('�
   throw new Error('Archived/deleted sessions are not protected from orphaned background work');
 }
 const nativeHost = fs.readFileSync(path.join(root, 'native', 'NativeHost.cs'), 'utf8');
+if (!nativeHost.includes('ShowForegroundDialog(CommonDialog dialog)') || !nativeHost.includes('TopMost = true') ||
+    nativeHost.includes('dialog.ShowDialog(this) == DialogResult.OK')) {
+  throw new Error('Native file/folder dialogs are not forced in front of their Workbench owner');
+}
 const nativeWatchdog = fs.readFileSync(path.join(root, 'native', 'NativeHostWatchdog.cs'), 'utf8');
 const nativeStartup = fs.readFileSync(path.join(root, 'native', 'NativeStartupRegistration.cs'), 'utf8');
 if (!apiServer.includes('ReconcileActiveJobs()') || !apiServer.includes('TryFinalizeTerminalJob') ||

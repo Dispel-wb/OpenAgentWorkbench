@@ -18,6 +18,7 @@ const providerPresets = {
 
 const presetForBaseUrl = baseUrl => {
   const normalized=(baseUrl||'').toLowerCase();
+  if(!normalized)return '';
   return Object.entries(providerPresets).find(([,preset])=>normalized.startsWith(preset.textBaseUrl.toLowerCase().replace('/anthropic','')))?.[0] || 'custom';
 };
 
@@ -27,8 +28,8 @@ const agentDocumentExtensions = new Set(['.docx','.xlsx','.pptx']);
 const visualModelPatterns = ['claude-','gpt-4o','gpt-4.1','gpt-5','gemini','vision','-vl','vl-','vlm','omni','pixtral','llava','internvl','minicpm-v','glm-4v','glm-4.5v','kimi-vl','grok-4'];
 
 const blankProvider = () => ({
-  id: '', preset: 'siliconflow', name: 'SiliconFlow', token: '', authStyle: 'bearer',
+  id: '', preset: '', name: '', token: '', authStyle: 'auto',
   capabilities:{schemaVersion:2,models:{},evidencePolicy:'unknown-until-probed'},
-  text: { enabled: true, protocol: 'openai', baseUrl: 'https://api.siliconflow.cn/v1', modelsText: '' },
-  image: { enabled: true, protocol: 'openai-images', baseUrl: 'https://api.siliconflow.cn/v1', modelsText: '' }
+  text: { enabled: true, protocol: 'openai', baseUrl: '', modelsText: '' },
+  image: { enabled: false, protocol: 'openai-images', baseUrl: '', modelsText: '' }
 });

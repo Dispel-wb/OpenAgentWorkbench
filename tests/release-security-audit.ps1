@@ -24,6 +24,7 @@ $personalPatterns = @('C:\\Users\\waseb','D:\\pic\\','AppData\\Local\\Temp\\code
 $credentialPattern = '(?i)(sk-[a-z0-9_-]{24,}|AIza[0-9A-Za-z_-]{25,}|gh[pousr]_[A-Za-z0-9_]{24,})'
 foreach ($file in $files | Where-Object { $textExtensions -contains $_.Extension }) {
     $text = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8
+    if ($null -eq $text) { $text = '' }
     foreach ($pattern in $personalPatterns) {
         if ($text -match $pattern) { $failures.Add("Personal or revoked-secret marker in $($file.FullName.Substring($sourceRoot.Length + 1)): $pattern") }
     }

@@ -343,10 +343,17 @@ namespace ClaudeCodeWorkbench
             {
                 ["providerId"] = "deepseek-default", ["model"] = "deepseek-v4-pro[1m]", ["effort"] = "max", ["permissionMode"] = "agent", ["maxTurns"] = 100, ["workerHarness"] = "auto"
             };
+            var sessions = JsonUtil.Read(AppPaths.SessionsFile, new JArray()) as JArray ?? new JArray();
+            var settings = JsonUtil.Read(AppPaths.SettingsFile, fallback) as JObject ?? (JObject)fallback.DeepClone();
+            if (!EditionInfo.IsOpenSource)
+            {
+                settings["workspace"] = AppPaths.Workspace;
+                foreach (var session in sessions.OfType<JObject>()) session["workspace"] = AppPaths.Workspace;
+            }
             await WriteJsonAsync(response, new JObject
             {
-                ["providers"] = _providers.AllPublic(), ["sessions"] = JsonUtil.Read(AppPaths.SessionsFile, new JArray()),
-                ["settings"] = JsonUtil.Read(AppPaths.SettingsFile, fallback), ["workspace"] = AppPaths.Workspace,
+                ["providers"] = _providers.AllPublic(), ["sessions"] = sessions,
+                ["settings"] = settings, ["workspace"] = AppPaths.Workspace,
                 ["version"] = Program.AppContractVersion, ["edition"] = new JObject { ["id"] = EditionInfo.Id, ["productName"] = EditionInfo.ProductName, ["openSource"] = EditionInfo.IsOpenSource }, ["backend"] = "C#/.NET native host", ["trayMode"] = true, ["maxConcurrentWorkers"] = MaxConcurrentWorkers,
                 ["persistence"] = _eventStore.Health(), ["providerHealth"] = _eventStore.ListProviderHealth(),
                 ["activeJobs"] = RunCenter()
@@ -906,7 +913,7 @@ namespace ClaudeCodeWorkbench
         private async Task ProbeProvider(HttpListenerContext context)
         {
             var payload = JsonUtil.ObjectOrEmpty(await ReadBody(context.Request));
-            var providerId = ((string)payload["providerId"] ?? "").Trim(); var timer = Stopwatch.StartNew();
+            var providerId = ((string)payload["providerId"] ?? "").Trim(); var probeOnly = (bool?)payload["probeOnly"] == true; var timer = Stopwatch.StartNew();
             if (providerId.Length > 0 && _providers.Get(providerId) == null)
             {
                 await WriteJsonAsync(context.Response, new JObject { ["error"] = "API 配置不存在", ["code"] = "provider_missing" }, 404); return;
@@ -958,7 +965,7 @@ namespace ClaudeCodeWorkbench
                 if (textModels.Length == 0)
                     throw new InvalidOperationException(definition.Name + " 已返回模型，但没有识别出可用于 Claude Code 的文字模型");
 
-                if (providerId.Length > 0) _eventStore.RecordProviderProbe(providerId, true, "", "", timer.ElapsedMilliseconds, 0, "preset-model-list");
+                if (providerId.Length > 0 && !probeOnly) _eventStore.RecordProviderProbe(providerId, true, "", "", timer.ElapsedMilliseconds, 0, "preset-model-list");
                 await WriteJsonAsync(context.Response, new JObject
                 {
                     ["preset"] = definition.Id, ["name"] = definition.Name, ["authStyle"] = definition.AuthStyle,
@@ -978,7 +985,7 @@ namespace ClaudeCodeWorkbench
             }
             catch (Exception error)
             {
-                if (providerId.Length > 0) { var failure = ClassifyProviderFailure(error.Message); _eventStore.RecordProviderProbe(providerId, false, (string)failure["kind"], error.Message, timer.ElapsedMilliseconds, (int?)failure["cooldownSeconds"] ?? 0, "preset-model-list"); }
+                if (providerId.Length > 0 && !probeOnly) { var failure = ClassifyProviderFailure(error.Message); _eventStore.RecordProviderProbe(providerId, false, (string)failure["kind"], error.Message, timer.ElapsedMilliseconds, (int?)failure["cooldownSeconds"] ?? 0, "preset-model-list"); }
                 await WriteJsonAsync(context.Response, new JObject { ["error"] = error.Message }, 400);
             }
         }

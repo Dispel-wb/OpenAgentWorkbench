@@ -2,6 +2,9 @@
 
 ## Unreleased — 1.0.0 readiness work
 
+- Raised native file, folder, import and export dialogs to the foreground of their Workbench owner. API auto-configuration now ignores a wrong/default selection, probes the supported provider catalog until the Key matches, and fills the provider, protocol, endpoints and models without recording failed candidate probes as provider-health failures.
+- Increased workbench typography and centered/enlarged the empty new-conversation surface. Re-clicking New Conversation now reuses the current untouched draft instead of creating duplicate empty tasks.
+- Pinned the Local edition to the Claude Code workspace at `D:\work\Claude`, including legacy session/settings normalization and a single-workspace UI; Open Source retains its multi-workspace project picker.
 - Fixed Local file attachment selection after credentials are cleared: the picker now follows the selected Worker capability instead of API/model readiness. Claude, Codex and DSHarness can select local files without an imported Provider; Pi remains explicitly disabled until its adapter supports attachments.
 - Unified settings, peripheral controls, empty archive states and the complete developer workbench chrome on a cool blue family for Open Agent, Codex and mixed skins. Dark mode keeps deep navy fills; light mode uses pale blue fills. This includes secondary buttons, native select groups, panels, dividers, file-tree glyphs, API capability cards, text and matched inner/outer focus frames; only the Local Claude skin retains the warm-brown treatment.
 - Moved per-message deletion exclusively to the right-click menu, removed the message-header red ×, and limited quoting to selected text through that same menu; regeneration and answer-version controls remain available.

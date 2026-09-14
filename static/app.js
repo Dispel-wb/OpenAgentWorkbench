@@ -121,12 +121,12 @@ const workbenchApp=createApp({
     async bootstrap() {
       try {
         const data = await this.api('/api/bootstrap');
-        this.edition=data.edition||this.edition;document.documentElement.dataset.edition=this.edition.id||'local';document.title=this.edition.productName||'Agent 中文工作台';this.providers = data.providers || [];this.providerHealth=Array.isArray(data.providerHealth)?data.providerHealth:[]; this.sessions = (data.sessions || []).map(session=>({...session,workspace:session.workspace||data.workspace})); this.settings = {...this.settings, ...(data.settings || {})};if(this.edition.openSource&&!this.customSkins.some(item=>item.id===this.settings.skin))this.settings.skin='open';this.workspace=data.settings?.workspace||data.workspace||this.settings.workspace;this.settings.workspace=this.workspace;await this.loadSkins();this.updateConfig={...this.updateConfig,...await this.api('/api/workbench/update').catch(()=>({}))};this.applyAppearance();
+        this.edition=data.edition||this.edition;document.documentElement.dataset.edition=this.edition.id||'local';document.title=this.edition.productName||'Agent 中文工作台';this.providers = data.providers || [];this.providerHealth=Array.isArray(data.providerHealth)?data.providerHealth:[];const fixedWorkspace=data.workspace||this.settings.workspace;this.sessions = (data.sessions || []).map(session=>({...session,workspace:this.edition.openSource?(session.workspace||fixedWorkspace):fixedWorkspace})); this.settings = {...this.settings, ...(data.settings || {})};if(this.edition.openSource&&!this.customSkins.some(item=>item.id===this.settings.skin))this.settings.skin='open';this.workspace=this.edition.openSource?(data.settings?.workspace||fixedWorkspace):fixedWorkspace;this.settings.workspace=this.workspace;await this.loadSkins();this.updateConfig={...this.updateConfig,...await this.api('/api/workbench/update').catch(()=>({}))};this.applyAppearance();
         this.projects=await this.api('/api/workbench/projects').catch(()=>[]);if(!this.projects.some(project=>project.path.toLowerCase()===this.workspace.toLowerCase()))this.projects.unshift({path:this.workspace,name:this.workspace.split(/[\\/]/).pop()||this.workspace});await Promise.all([this.loadExtensions().catch(()=>{}),this.loadAgentRuntimes(false).catch(()=>{}),this.loadStartup().catch(()=>{})]);
         await this.syncTranscripts();let legacySchedules=[];try{legacySchedules=JSON.parse(localStorage.getItem('claude-workbench-scheduler')||'[]');if(!Array.isArray(legacySchedules))legacySchedules=[];}catch(_){localStorage.removeItem('claude-workbench-scheduler');}this.scheduler=await this.api('/api/workbench/schedules').catch(()=>legacySchedules);if(!Array.isArray(this.scheduler))this.scheduler=[];if(!this.scheduler.length&&legacySchedules.length){this.scheduler=legacySchedules;await this.saveSchedules();}
         if (!this.providers.some(p => p.id === this.settings.providerId)) this.settings.providerId = this.providers[0]?.id || '';
         this.ensureModels();
-        this.activeRuns=(data.activeJobs||[]).filter(job=>job.kind==='chat');const active=this.activeRuns[0];if(active?.workspace)this.workspace=active.workspace;const target=active?.sessionId&&this.sessions.some(s=>s.id===active.sessionId)?active.sessionId:this.sortedSessions[0]?.id;
+        this.activeRuns=(data.activeJobs||[]).filter(job=>job.kind==='chat');const active=this.activeRuns[0];if(this.isOpenSource&&active?.workspace)this.workspace=active.workspace;const target=active?.sessionId&&this.sessions.some(s=>s.id===active.sessionId)?active.sessionId:this.sortedSessions[0]?.id;
         if (target) await this.activateSession(target); else this.newSession();
         await this.syncRuns(true);
       } catch (error) { this.status = '启动失败：' + error.message; }
@@ -212,7 +212,10 @@ const workbenchApp=createApp({
     async searchFileSuggestions(query){try{this.fileSuggestions=await this.api(`/api/workbench/files/search?workspace=${encodeURIComponent(this.workspace)}&query=${encodeURIComponent(query)}`);}catch(_){this.fileSuggestions=[];}},
     useFileSuggestion(file){this.prompt=this.prompt.replace(/(?:^|\s)@([^\s@]{1,80})$/,match=>`${match.startsWith(' ')?' ':''}@${file.path} `);this.fileSuggestions=[];nextTick(()=>document.querySelector('.composer textarea')?.focus());},
     async newSession() {
-      const nowMs=Date.now();if(nowMs-this.lastNewAt<500)return;this.lastNewAt=nowMs;this.sessionLoadSerial+=1;this.sessionSwitching=true;await this.detachCurrentRunView();
+      const nowMs=Date.now();if(nowMs-this.lastNewAt<500)return;this.lastNewAt=nowMs;
+      const current=this.currentSession,hasQueued=(current?.queue||[]).some(item=>!item.state||['queued','starting','running'].includes(item.state));
+      if(current&&!current.started&&!this.messages.length&&!this.sessionRun(current.id)&&!hasQueued){nextTick(()=>document.querySelector('.composer textarea')?.focus());return;}
+      this.sessionLoadSerial+=1;this.sessionSwitching=true;await this.detachCurrentRunView();
       const now = new Date().toISOString(), id=crypto.randomUUID(), session = { id, claudeSessionId:id, title:'新的会话', createdAt:now, updatedAt:now, workspace:this.workspace, started:false, allowedDirs:[], queue:[] };
       this.sessions.push(session); this.activeSessionId = session.id; this.messages = [];this.messageWindowEnd=0;this.messageTextLimits={};this.followConversation=true;this.sessionSwitching=false; this.saveSessions(); nextTick(() => document.querySelector('.composer textarea')?.focus());
     },
@@ -522,16 +525,23 @@ const workbenchApp=createApp({
     async autoConfigureProvider() {
       this.providerError='';this.discoverMessage='';
       if(!this.providerForm.token&&!this.providerForm.id){this.providerError='请先粘贴 API 令牌';return;}
-      if(!providerPresets[this.providerForm.preset]){this.providerError='未知 Key 无法安全地自动匹配服务商；请选择服务商预设，或使用“自定义 / 其他”填写接口地址';return;}
       this.discovering='all';
+      const inferred=presetForBaseUrl(this.providerForm.text?.baseUrl),preferred=providerPresets[inferred]?inferred:(providerPresets[this.providerForm.preset]?this.providerForm.preset:'');
+      const candidates=[preferred,...Object.keys(providerPresets)].filter((value,index,array)=>value&&array.indexOf(value)===index),failures=[];
       try {
-        const data=await this.api('/api/providers/probe',{method:'POST',body:{preset:this.providerForm.preset,providerId:this.providerForm.id,token:this.providerForm.token}});
-        this.providerForm.name=data.name;this.providerForm.authStyle=data.authStyle;
-        Object.assign(this.providerForm.text,{enabled:data.text.enabled,protocol:data.text.protocol,baseUrl:data.text.baseUrl,modelsText:(data.text.models||[]).join(', ')});
-        Object.assign(this.providerForm.image,{enabled:data.image.enabled,protocol:data.image.protocol,baseUrl:data.image.baseUrl,modelsText:(data.image.models||[]).join(', ')});
-        this.providerForm.capabilities=data.capabilities||{schemaVersion:2,models:{},evidencePolicy:'unknown-until-probed'};
-        this.discoverMessage=`识别成功：Text ${data.text.models.length} 个 · Image ${data.image.models.length} 个模型。${data.warning?data.warning+' ':''}确认后点击“加密保存”。`;await this.loadProviderHealth();
-      }catch(error){this.providerError=`${providerPresets[this.providerForm.preset]?.name||'API'} 自动识别失败：${error.message}`;}finally{this.discovering='';}
+        for(let index=0;index<candidates.length;index+=1){
+          const presetId=candidates[index],preset=providerPresets[presetId];this.discoverMessage=`正在匹配 API 服务商：${preset.name}（${index+1}/${candidates.length}）`;
+          try{
+            const data=await this.api('/api/providers/probe',{method:'POST',timeoutMs:35000,body:{preset:presetId,providerId:this.providerForm.id,token:this.providerForm.token,probeOnly:true}});
+            this.providerForm.preset=data.preset||presetId;this.providerForm.name=data.name;this.providerForm.authStyle=data.authStyle;
+            Object.assign(this.providerForm.text,{enabled:data.text.enabled,protocol:data.text.protocol,baseUrl:data.text.baseUrl,modelsText:(data.text.models||[]).join(', ')});
+            Object.assign(this.providerForm.image,{enabled:data.image.enabled,protocol:data.image.protocol,baseUrl:data.image.baseUrl,modelsText:(data.image.models||[]).join(', ')});
+            this.providerForm.capabilities=data.capabilities||{schemaVersion:2,models:{},evidencePolicy:'unknown-until-probed'};
+            this.discoverMessage=`已自动匹配 ${data.name}：Text ${data.text.models.length} 个 · Image ${data.image.models.length} 个模型。${data.warning?data.warning+' ':''}确认后点击“加密保存”。`;await this.loadProviderHealth();return;
+          }catch(error){failures.push(`${preset.name}: ${error.message}`);}
+        }
+        this.discoverMessage='';this.providerError=`未能在 ${candidates.length} 个受支持服务商中匹配此 Key。${failures.length?` 最后结果：${failures[failures.length-1]}`:''}`;
+      }finally{this.discovering='';}
     },
     async discover(kind) {
       this.providerError='';this.discoverMessage='';const cap=this.providerForm[kind];if(!cap.baseUrl){this.providerError=`请先填写${kind==='text'?'文字':'生图'}接口地址`;return;}if(!this.providerForm.token&&!this.providerForm.id){this.providerError='首次导入时请先填写 API 令牌';return;}

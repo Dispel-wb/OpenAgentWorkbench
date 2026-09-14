@@ -135,6 +135,26 @@ namespace ClaudeCodeWorkbench
             if (connection != null) _pendingUrl = connection.Url;
         }
 
+        private DialogResult ShowForegroundDialog(CommonDialog dialog)
+        {
+            var restoreTopMost = TopMost;
+            if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
+            if (!Visible) Show();
+            Activate();
+            BringToFront();
+            try
+            {
+                TopMost = true;
+                Activate();
+                return dialog.ShowDialog(this);
+            }
+            finally
+            {
+                TopMost = restoreTopMost;
+                Activate();
+            }
+        }
+
         public Task<string[]> SelectFilesAsync()
         {
             var source = new TaskCompletionSource<string[]>();
@@ -150,7 +170,7 @@ namespace ClaudeCodeWorkbench
                         Filter = "所有文件 (*.*)|*.*"
                     })
                     {
-                        source.SetResult(dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileNames : new string[0]);
+                        source.SetResult(ShowForegroundDialog(dialog) == DialogResult.OK ? dialog.FileNames : new string[0]);
                     }
                 }
                 catch (Exception error) { source.SetException(error); }
@@ -173,7 +193,7 @@ namespace ClaudeCodeWorkbench
                         Filter = "Claude Code (claude.exe)|claude.exe|Windows 可执行文件 (*.exe)|*.exe"
                     })
                     {
-                        source.SetResult(dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : "");
+                        source.SetResult(ShowForegroundDialog(dialog) == DialogResult.OK ? dialog.FileName : "");
                     }
                 }
                 catch (Exception error) { source.SetException(error); }
@@ -196,7 +216,7 @@ namespace ClaudeCodeWorkbench
                         Filter = "皮肤包 (*.zip)|*.zip"
                     })
                     {
-                        source.SetResult(dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : "");
+                        source.SetResult(ShowForegroundDialog(dialog) == DialogResult.OK ? dialog.FileName : "");
                     }
                 }
                 catch (Exception error) { source.SetException(error); }
@@ -219,7 +239,7 @@ namespace ClaudeCodeWorkbench
                         Filter = "扩展包 (*.zip)|*.zip"
                     })
                     {
-                        source.SetResult(dialog.ShowDialog(this) == DialogResult.OK ? dialog.FileName : "");
+                        source.SetResult(ShowForegroundDialog(dialog) == DialogResult.OK ? dialog.FileName : "");
                     }
                 }
                 catch (Exception error) { source.SetException(error); }
@@ -241,7 +261,7 @@ namespace ClaudeCodeWorkbench
                         SelectedPath = Directory.Exists(AppPaths.Workspace) ? AppPaths.Workspace : ""
                     })
                     {
-                        source.SetResult(dialog.ShowDialog(this) == DialogResult.OK ? dialog.SelectedPath : "");
+                        source.SetResult(ShowForegroundDialog(dialog) == DialogResult.OK ? dialog.SelectedPath : "");
                     }
                 }
                 catch (Exception error) { source.SetException(error); }
@@ -308,7 +328,7 @@ namespace ClaudeCodeWorkbench
                         Title = "导出对话为 TXT"
                     })
                     {
-                        if (dialog.ShowDialog(this) != DialogResult.OK) { source.SetResult(""); return; }
+                        if (ShowForegroundDialog(dialog) != DialogResult.OK) { source.SetResult(""); return; }
                         File.WriteAllText(dialog.FileName, text ?? "", new System.Text.UTF8Encoding(true));
                         source.SetResult(dialog.FileName);
                     }

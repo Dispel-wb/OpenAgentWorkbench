@@ -71,6 +71,7 @@ namespace ClaudeCodeWorkbench
             }
             if (method == "POST" && path == "/api/workbench/projects/add")
             {
+                if (!EditionInfo.IsOpenSource) { await WriteJson(context.Response, ProjectObject(AppPaths.Workspace)); return true; }
                 var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
                 var selected = ((string)body["path"] ?? "").Trim();
                 if (selected.Length == 0 && _window != null) selected = await _window.SelectFolderAsync();
@@ -400,6 +401,7 @@ namespace ClaudeCodeWorkbench
 
         private JArray ListProjects()
         {
+            if (!EditionInfo.IsOpenSource) return new JArray(ProjectObject(AppPaths.Workspace));
             var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { AppPaths.Workspace };
             foreach (var token in JsonUtil.Read(RegistryFile, new JArray()) as JArray ?? new JArray())
             {

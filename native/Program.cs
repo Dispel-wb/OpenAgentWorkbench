@@ -423,11 +423,12 @@ namespace ClaudeCodeWorkbench
                 var fallback = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments), EditionInfo.IsOpenSource ? "OpenAgent" : "Claude");
                 try
                 {
-                    if (!Directory.Exists(Path.GetPathRoot(EditionInfo.DefaultWorkspace))) Workspace = fallback;
+                    if (!EditionInfo.IsOpenSource) { Directory.CreateDirectory(EditionInfo.DefaultWorkspace); Workspace = EditionInfo.DefaultWorkspace; }
+                    else if (!Directory.Exists(Path.GetPathRoot(EditionInfo.DefaultWorkspace))) Workspace = fallback;
                     else { Directory.CreateDirectory(EditionInfo.DefaultWorkspace); Workspace = EditionInfo.DefaultWorkspace; }
                 }
-                catch (UnauthorizedAccessException) { Workspace = fallback; }
-                catch (IOException) { Workspace = fallback; }
+                catch (UnauthorizedAccessException) { if (!EditionInfo.IsOpenSource) throw; Workspace = fallback; }
+                catch (IOException) { if (!EditionInfo.IsOpenSource) throw; Workspace = fallback; }
             }
             ClaudeRoot = Environment.GetEnvironmentVariable("CLAUDE_GUI_ROOT");
             if (string.IsNullOrWhiteSpace(ClaudeRoot)) ClaudeRoot = Directory.Exists(@"D:\softwares") ? EditionInfo.DefaultInstallDirectory : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Programs", EditionInfo.StorageId);

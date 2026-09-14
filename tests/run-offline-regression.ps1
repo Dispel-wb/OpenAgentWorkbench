@@ -53,7 +53,7 @@ foreach($fault in @('','oversize','flood','byte-flood','malformed','eof')){
     if($fault){$argsForCase+=@('-Fault',$fault)}
     Add-Case ('dsh-sdk-'+$(if($fault){$fault}else{'normal'})) 'dsh-worker-sdk-integration.ps1' $argsForCase
 }
-foreach($name in @('ui-contract-selftest','ui-connection-state-selftest','bootstrap-workspace-selftest','public-doc-links-selftest')){Add-Case $name "$name.js" @() $false}
+foreach($name in @('ui-contract-selftest','ui-connection-state-selftest','bootstrap-workspace-selftest','provider-auto-match-selftest','public-doc-links-selftest')){Add-Case $name "$name.js" @() $false}
 Add-Case 'pi-worker-sdk-integration' 'pi-worker-sdk-integration.js'
 $report=[ordered]@{
     schemaVersion=1;state='running';candidateSha256=$hash;startedAt=[DateTimeOffset]::UtcNow.ToString('o');completedAt=$null
