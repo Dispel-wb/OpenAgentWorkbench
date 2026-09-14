@@ -17,7 +17,7 @@
     "@deepseek-ai/dsh-session-persistence": "^0.1.2-alpha.5",
     "@deepseek-ai/dsh-session-query": "^0.1.2-alpha.5",
     "@deepseek-ai/dsh-session-telemetry": "^0.1.2-alpha.5",
-    "@deepseek-ai/dsh-session-title-llm": "^0.1.2-alpha.5",
+    "@deepseek-ai/dsh-session-title-llm": "^0.1.2-rc.1",
     "@deepseek-ai/dsh-settings": "^0.1.2-alpha.5",
     "@deepseek-ai/dsh-shell": "^0.1.2-alpha.5",
     "@deepseek-ai/dsh-spill": "^0.1.2-alpha.5",
