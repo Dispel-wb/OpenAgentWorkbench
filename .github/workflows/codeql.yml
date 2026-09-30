@@ -30,4 +30,4 @@ jobs:
           python -m pip install Pillow==12.3.0
           .\restore_build_dependencies.ps1
           .\build_exe.ps1 -Edition OpenSource -DependencyRoot .\.packages -PythonPath (Get-Command python).Source -OutputPath .\dist\codeql\OpenAgentWorkbench.exe
-      - uses: github/codeql-action/analyze@6f5948dfacef28e207b48d0905cf90c03365536d # v3
+      - uses: github/codeql-action/analyze@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v3
