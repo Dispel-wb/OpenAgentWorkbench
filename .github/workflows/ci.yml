@@ -79,7 +79,7 @@ jobs:
           .\tests\edition-smoke.ps1 -Executable $exe -ExpectedEdition opensource -NodePath $node
       - name: Full isolated offline regression
         shell: pwsh
-        run: .\tests\run-offline-regression.ps1 -Executable .\dist\ci\OpenAgentWorkbench.exe -OutputDirectory .\dist\ci\offline-regression -DependencyRoot .\.packages
+        run: ./tests/run-offline-regression.ps1 -Executable ./dist/ci/OpenAgentWorkbench.exe -OutputDirectory ./dist/ci/offline-regression -DependencyRoot ./.packages -ExpectedEdition opensource
       - name: Security release gate
         shell: pwsh
         run: .\tests\release-security-audit.ps1 -Root . -Executable .\dist\ci\OpenAgentWorkbench.exe -ReportPath .\dist\ci\security-audit.json
