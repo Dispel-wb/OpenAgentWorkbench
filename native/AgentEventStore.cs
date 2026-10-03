@@ -547,7 +547,7 @@ ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,state=CASE WHEN schedules
                 var stamp = now.ToUniversalTime().ToString("o");
                 if (success)
                 {
-                    var state = repeat > 0 ? "scheduled" : "completed"; var due = repeat > 0 ? now.AddMinutes(repeat).ToUniversalTime().ToString("o") : Convert.ToString(row["due_at"]);
+                    var state = repeat > 0 ? "scheduled" : "completed"; var due = repeat > 0 ? NextScheduleDue(row, now, repeat).ToUniversalTime().ToString("o") : Convert.ToString(row["due_at"]);
                     db.Execute("UPDATE schedules SET state=?2,due_at=?3,retry_count=0,lease_until=NULL,claimed_by=NULL,active_run_id=NULL,last_error=NULL,last_run_at=?4,updated_at=?4 WHERE id=?1", id, state, due, stamp);
                 }
                 else if (retries < max)
@@ -558,6 +558,28 @@ ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,state=CASE WHEN schedules
                 else db.Execute("UPDATE schedules SET state='dead_letter',lease_until=NULL,claimed_by=NULL,active_run_id=NULL,last_error=?2,dead_lettered_at=?3,last_run_at=?3,updated_at=?3 WHERE id=?1", id, ScheduleLimit(error, 2000), stamp);
                 return ScheduleItem(db.Query("SELECT * FROM schedules WHERE id=?1", id).First());
             }
+        }
+
+        private static DateTimeOffset NextScheduleDue(Dictionary<string, object> row, DateTimeOffset now, int repeat)
+        {
+            JObject payload; try { payload = JObject.Parse(Convert.ToString(row["payload_json"])); } catch { payload = new JObject(); }
+            if (string.Equals((string)payload["frequency"], "weekly", StringComparison.OrdinalIgnoreCase) && payload["weekdays"] is JArray days)
+            {
+                var selected = new HashSet<int>(days.Select(day => (int?)day ?? -1).Where(day => day >= 0 && day <= 6));
+                DateTimeOffset original;
+                if (selected.Count > 0 && DateTimeOffset.TryParse((string)payload["at"], out original))
+                {
+                    var localNow = now.ToLocalTime().DateTime;
+                    var time = original.ToLocalTime().TimeOfDay;
+                    for (var offset = 0; offset <= 7; offset++)
+                    {
+                        var candidate = localNow.Date.AddDays(offset).Add(time);
+                        if (candidate <= localNow || !selected.Contains((int)candidate.DayOfWeek)) continue;
+                        return new DateTimeOffset(candidate, TimeZoneInfo.Local.GetUtcOffset(candidate));
+                    }
+                }
+            }
+            return now.AddMinutes(repeat);
         }
 
         public void DeferSchedule(string id, DateTimeOffset due, string reason)
@@ -619,6 +641,32 @@ ON CONFLICT(id) DO UPDATE SET task_id=excluded.task_id,state=CASE WHEN schedules
         public JArray QueueInProgress()
         {
             lock (_gate) using (var db = SqliteDb.Open(_path)) return new JArray(db.Query("SELECT * FROM task_queue WHERE state IN ('starting','running') ORDER BY updated_at").Select(QueueItem));
+        }
+
+        public int ReconcileTerminalQueue(string taskId = null)
+        {
+            lock (_gate) using (var db = SqliteDb.Open(_path))
+            {
+                var now = ProviderStore.NowIso();
+                if (string.IsNullOrWhiteSpace(taskId))
+                {
+                    db.Execute(@"UPDATE task_queue
+SET state=(SELECT runs.state FROM runs WHERE runs.id=task_queue.run_id),updated_at=?1
+WHERE state IN ('starting','running','paused')
+  AND COALESCE(run_id,'')<>''
+  AND EXISTS(SELECT 1 FROM runs WHERE runs.id=task_queue.run_id AND runs.state IN ('completed','failed','cancelled'))", now);
+                }
+                else
+                {
+                    db.Execute(@"UPDATE task_queue
+SET state=(SELECT runs.state FROM runs WHERE runs.id=task_queue.run_id),updated_at=?2
+WHERE task_id=?1
+  AND state IN ('starting','running','paused')
+  AND COALESCE(run_id,'')<>''
+  AND EXISTS(SELECT 1 FROM runs WHERE runs.id=task_queue.run_id AND runs.state IN ('completed','failed','cancelled'))", taskId, now);
+                }
+                return checked((int)db.ScalarInt64("SELECT changes()"));
+            }
         }
 
         public JObject QueueById(string id)
@@ -1038,7 +1086,9 @@ ON CONFLICT(id) DO UPDATE SET workspace_path=excluded.workspace_path,title=exclu
         {
             JObject value; try { value = JObject.Parse(payload); } catch { return; }
             var policy = ToolRuntimeSettings.From(policyManifest);
-            var type = (string)value["type"] ?? ""; var blocks = value["message"]?["content"] as JArray ?? new JArray();
+            var type = (string)value["type"] ?? "";
+            var message = value["message"] as JObject;
+            var blocks = message == null ? new JArray() : message["content"] as JArray ?? new JArray();
             if (type == "assistant")
             {
                 foreach (var block in blocks.OfType<JObject>().Where(block => (string)block["type"] == "tool_use"))
@@ -1113,6 +1163,13 @@ duration_ms=MAX(0,CAST((julianday(?7)-julianday(started_at))*86400000 AS INTEGER
                 if (store.TaskState("task-live") != JobStates.Running) return 65;
                 store.UpdateRunState("run-live-other", JobStates.Completed, 124, "{}");
                 if (store.TaskState("task-live") != JobStates.Completed) return 66;
+                store.UpsertRun("run-live", "task-live", "request-live", "offline", AppPaths.Workspace, JobStates.Running, 123);
+                var staleQueue = store.Enqueue("task-live", "重启后应自动对账", "steer", new JObject());
+                var staleQueueId = (string)staleQueue["id"];
+                if (!store.TransitionQueue(staleQueueId, "queued", "running", "run-live")) return 73;
+                store.UpdateRunState("run-live", JobStates.Failed, 123, "{}");
+                if (store.ReconcileTerminalQueue("task-live") != 1 || store.ListQueue("task-live", false).Count != 0 ||
+                    (string)store.QueueById(staleQueueId)["state"] != JobStates.Failed) return 74;
                 store.UpsertRun("run-live", "task-live", "request-live", "offline", AppPaths.Workspace, JobStates.Running, 123);
                 store.AppendWorkerEvent("run-live", "task-live", "{\"type\":\"result\",\"text\":\"SQLite 中文\"}");
                 long next; var events = store.ReadEvents("run-live", 0, 10, out next);

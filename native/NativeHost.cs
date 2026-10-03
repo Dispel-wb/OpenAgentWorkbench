@@ -42,6 +42,8 @@ namespace ClaudeCodeWorkbench
         private Panel _recoveryPanel;
         private Label _recoveryTitle;
         private Label _recoveryMessage;
+        private PictureBox _startupSnapshot;
+        private bool _startupSnapshotLoaded;
 
         public NativeHost(ApiServer server, bool hostOnly)
         {
@@ -58,6 +60,7 @@ namespace ClaudeCodeWorkbench
             MinimizeBox = true;
             KeyPreview = true;
             AutoScaleMode = AutoScaleMode.Dpi;
+            if (!_hostOnly) LoadStartupSnapshot();
 
             _resizeTimer = new Timer { Interval = 90 };
             _connectionTimer = new Timer { Interval = 900 };
@@ -292,6 +295,7 @@ namespace ClaudeCodeWorkbench
                 timer.Stop();
                 timer.Dispose();
                 _allowExit = true;
+                TerminateDetachedUi();
                 if (_tray != null) _tray.Visible = false;
                 if (_server != null) _server.Stop(false);
                 Close();
@@ -303,10 +307,13 @@ namespace ClaudeCodeWorkbench
         {
             try
             {
-                var state = JsonUtil.Read(Path.Combine(AppPaths.Data, "ui-connection-state.json"), new Newtonsoft.Json.Linq.JObject()) as Newtonsoft.Json.Linq.JObject;
+                var statePath = Path.Combine(AppPaths.Data, "ui-connection-state.json");
+                var state = JsonUtil.Read(statePath, new Newtonsoft.Json.Linq.JObject()) as Newtonsoft.Json.Linq.JObject;
                 var pid = (int?)state?["uiPid"] ?? 0;
                 if (pid <= 0 || pid == Process.GetCurrentProcess().Id) return false;
-                using (var process = Process.GetProcessById(pid)) return !process.HasExited;
+                using (var process = Process.GetProcessById(pid))
+                    return DurableProcessIdentity.Matches(process, (string)state?["uiExecutablePath"],
+                        (long?)state?["uiStartedAtUtcTicks"], (string)state?["uiStartedAtUtc"], statePath);
             }
             catch { return false; }
         }
@@ -341,11 +348,10 @@ namespace ClaudeCodeWorkbench
         private void OnFormClosing(object sender, FormClosingEventArgs e)
         {
             CrashLog.Info("FormClosing reason=" + e.CloseReason + " allowExit=" + _allowExit);
-            if (_server == null) return;
             if (_allowExit || e.CloseReason == CloseReason.WindowsShutDown) return;
             e.Cancel = true;
             Hide();
-            if (!_trayHintShown)
+            if (_server != null && _tray != null && !_trayHintShown)
             {
                 _trayHintShown = true;
                 _tray.ShowBalloonTip(2200, "Claude Code 仍在运行", "窗口已隐藏到托盘，当前任务和后端不会停止。", ToolTipIcon.Info);
@@ -429,9 +435,27 @@ namespace ClaudeCodeWorkbench
                 "当前还有任务正在运行。完全退出会停止这些任务，确定退出吗？",
                 "完全退出", MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
             _allowExit = true;
+            TerminateDetachedUi();
             if (_tray != null) _tray.Visible = false;
             _server.Stop(true);
             Close();
+        }
+
+        private static void TerminateDetachedUi()
+        {
+            try
+            {
+                var statePath = Path.Combine(AppPaths.Data, "ui-connection-state.json");
+                var state = JsonUtil.Read(statePath, new Newtonsoft.Json.Linq.JObject()) as Newtonsoft.Json.Linq.JObject;
+                var pid = (int?)state?["uiPid"] ?? 0;
+                if (pid <= 0 || pid == Process.GetCurrentProcess().Id) return;
+                using (var process = Process.GetProcessById(pid))
+                {
+                    if (DurableProcessIdentity.Matches(process, (string)state?["uiExecutablePath"],
+                        (long?)state?["uiStartedAtUtcTicks"], (string)state?["uiStartedAtUtc"], statePath)) process.Kill();
+                }
+            }
+            catch { }
         }
 
         private async Task CheckHostConnectionAsync()
@@ -514,15 +538,28 @@ namespace ClaudeCodeWorkbench
         {
             try
             {
+                string uiExecutablePath;
+                string uiStartedAtUtc;
+                long uiStartedAtUtcTicks;
+                using (var current = Process.GetCurrentProcess())
+                {
+                    uiExecutablePath = DurableProcessIdentity.ExecutablePath(current);
+                    uiStartedAtUtc = DurableProcessIdentity.StartedAtUtc(current);
+                    uiStartedAtUtcTicks = DurableProcessIdentity.StartedAtUtcTicks(current);
+                }
                 JsonUtil.WriteAtomic(Path.Combine(AppPaths.Data, "ui-connection-state.json"), new Newtonsoft.Json.Linq.JObject
                 {
                     ["state"] = state, ["uiPid"] = Process.GetCurrentProcess().Id,
+                    ["uiExecutablePath"] = uiExecutablePath,
+                    ["uiStartedAtUtc"] = uiStartedAtUtc,
+                    ["uiStartedAtUtcTicks"] = uiStartedAtUtcTicks,
                     ["hostPid"] = connection == null ? 0 : connection.Pid,
                     ["url"] = connection == null ? (_hostConnection == null ? "" : _hostConnection.Url) : connection.Url,
                     ["protocolVersion"] = connection == null ? ApiServer.ProtocolVersion : connection.ProtocolVersion,
                     ["webView2Mode"] = _webView2Mode,
                     ["webView2Version"] = _webView2Version,
                     ["webView2RuntimeFolder"] = _webView2RuntimeFolder,
+                    ["startupSnapshotLoaded"] = _startupSnapshotLoaded,
                     ["windowsFamily"] = WebViewRuntimeInfo.WindowsFamily(),
                     ["windowsBuild"] = WebViewRuntimeInfo.WindowsBuild(),
                     ["updatedAt"] = ProviderStore.NowIso()
@@ -597,9 +634,21 @@ namespace ClaudeCodeWorkbench
                         _recoveryCount = 0;
                         _hostProbeFailures = 0;
                         _hostUnavailable = false;
+                        if (!await WaitForInterfaceReadyAsync(next))
+                        {
+                            ScheduleBrowserRecovery("工作台连接 Host 超时，正在自动恢复。");
+                            return;
+                        }
+                        next.Visible = true;
+                        next.BringToFront();
+                        if (_startupSnapshot != null) _startupSnapshot.BringToFront();
                         HideRecoveryPanel();
                         if (!_hostOnly && _hostConnection != null)
                             WriteUiConnectionState("connected", _hostConnection);
+                        await Task.Delay(120);
+                        await SaveStartupSnapshotAsync(next);
+                        HideStartupSnapshot();
+                        next.BringToFront();
                         await ValidateBrowserContentAsync(next);
                     }
                     else
@@ -617,8 +666,7 @@ namespace ClaudeCodeWorkbench
                 };
 
                 _browser = next;
-                next.Visible = true;
-                next.BringToFront();
+                if (_startupSnapshot != null) _startupSnapshot.BringToFront();
                 if (_recoveryPanel != null) _recoveryPanel.BringToFront();
                 if (!string.IsNullOrWhiteSpace(_pendingUrl)) next.CoreWebView2.Navigate(_pendingUrl);
                 if (old != null)
@@ -664,6 +712,78 @@ namespace ClaudeCodeWorkbench
                 CrashLog.Handled("RendererWatchdog", error);
                 ScheduleBrowserRecovery("界面完整性检查失败，正在自动恢复。");
             }
+        }
+
+        private async Task<bool> WaitForInterfaceReadyAsync(WebView2 browser)
+        {
+            for (var attempt = 0; attempt < 300; attempt++)
+            {
+                if (IsDisposed || browser == null || browser.IsDisposed || !ReferenceEquals(_browser, browser)) return false;
+                try
+                {
+                    var ready = await browser.CoreWebView2.ExecuteScriptAsync(
+                        "document.documentElement.dataset.interfaceReady === 'true'");
+                    if (string.Equals(ready, "true", StringComparison.OrdinalIgnoreCase)) return true;
+                }
+                catch { }
+                await Task.Delay(100);
+            }
+            return false;
+        }
+
+        private void LoadStartupSnapshot()
+        {
+            try
+            {
+                var path = Path.Combine(AppPaths.Data, "ui-startup-snapshot.png");
+                if (!File.Exists(path)) return;
+                Image image;
+                using (var stream = new MemoryStream(File.ReadAllBytes(path)))
+                using (var source = Image.FromStream(stream)) image = new Bitmap(source);
+                _startupSnapshot = new PictureBox
+                {
+                    Dock = DockStyle.Fill,
+                    BackColor = BackColor,
+                    SizeMode = PictureBoxSizeMode.StretchImage,
+                    Image = image,
+                    TabStop = false
+                };
+                Controls.Add(_startupSnapshot);
+                _startupSnapshot.BringToFront();
+                _startupSnapshotLoaded = true;
+            }
+            catch (Exception error) { CrashLog.Handled("StartupSnapshotLoad", error); }
+        }
+
+        private async Task SaveStartupSnapshotAsync(WebView2 browser)
+        {
+            var target = Path.Combine(AppPaths.Data, "ui-startup-snapshot.png");
+            var temporary = target + ".new";
+            try
+            {
+                Directory.CreateDirectory(AppPaths.Data);
+                using (var stream = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None))
+                    await browser.CoreWebView2.CapturePreviewAsync(CoreWebView2CapturePreviewImageFormat.Png, stream);
+                if (File.Exists(target)) File.Replace(temporary, target, null);
+                else File.Move(temporary, target);
+            }
+            catch (Exception error)
+            {
+                try { if (File.Exists(temporary)) File.Delete(temporary); } catch { }
+                CrashLog.Handled("StartupSnapshotSave", error);
+            }
+        }
+
+        private void HideStartupSnapshot()
+        {
+            if (_startupSnapshot == null) return;
+            var snapshot = _startupSnapshot;
+            _startupSnapshot = null;
+            Controls.Remove(snapshot);
+            var image = snapshot.Image;
+            snapshot.Image = null;
+            snapshot.Dispose();
+            if (image != null) image.Dispose();
         }
 
         private void ScheduleBrowserRecovery(string detail)
@@ -767,6 +887,11 @@ namespace ClaudeCodeWorkbench
                 if (_tray != null) { _tray.Visible = false; _tray.Dispose(); }
                 if (_browser != null) _browser.Dispose();
                 if (_recoveryPanel != null) _recoveryPanel.Dispose();
+                if (_startupSnapshot != null)
+                {
+                    if (_startupSnapshot.Image != null) _startupSnapshot.Image.Dispose();
+                    _startupSnapshot.Dispose();
+                }
             }
             base.Dispose(disposing);
         }

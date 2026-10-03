@@ -281,7 +281,7 @@ namespace ClaudeCodeWorkbench
         {
             HostConnection connection;
             JObject incompatible;
-            if (TryReadHostConnection(out connection, out incompatible)) return connection;
+            if (TryReadHostConnection(out connection, out incompatible) && ProbeHostConnection(connection)) return connection;
             if (incompatible != null)
             {
                 var activeJobs = (int?)incompatible["activeJobs"] ?? 0;
@@ -303,9 +303,27 @@ namespace ClaudeCodeWorkbench
             while (DateTime.UtcNow < expires)
             {
                 Thread.Sleep(120);
-                if (TryReadHostConnection(out connection, out incompatible)) return connection;
+                if (TryReadHostConnection(out connection, out incompatible) && ProbeHostConnection(connection)) return connection;
             }
             throw new InvalidOperationException("Agent Host 启动超时，请查看 native-runtime.log");
+        }
+
+        private static bool ProbeHostConnection(HostConnection connection)
+        {
+            if (connection == null || string.IsNullOrWhiteSpace(connection.Url)) return false;
+            try
+            {
+                var request = (HttpWebRequest)WebRequest.Create(connection.Url + "api/bootstrap");
+                request.Method = "GET";
+                request.Timeout = 1400;
+                request.ReadWriteTimeout = 1400;
+                request.KeepAlive = false;
+                request.Headers["X-Desktop-Secret"] = connection.Secret;
+                request.Headers["X-Workbench-Protocol"] = connection.ProtocolVersion.ToString();
+                using (var response = (HttpWebResponse)request.GetResponse())
+                    return response.StatusCode == HttpStatusCode.OK;
+            }
+            catch { return false; }
         }
 
         internal static bool TryReadHostConnection(out HostConnection connection, out JObject incompatible)
@@ -325,6 +343,10 @@ namespace ClaudeCodeWorkbench
                     var claimedPath = Path.GetFullPath((string)state["executablePath"] ?? "");
                     var actualPath = Path.GetFullPath(process.MainModule.FileName);
                     if (!string.Equals(claimedPath, actualPath, StringComparison.OrdinalIgnoreCase)) return false;
+                    var claimedStart = (string)state["processStartedAtUtc"] ?? "";
+                    var claimedStartTicks = (long?)state["processStartedAtUtcTicks"];
+                    if ((claimedStartTicks.HasValue || !string.IsNullOrWhiteSpace(claimedStart)) &&
+                        !DurableProcessIdentity.Matches(process, claimedPath, claimedStartTicks, claimedStart, null)) return false;
                 }
                 if ((int?)state["protocolVersion"] != ApiServer.ProtocolVersion)
                 {
@@ -412,6 +434,9 @@ namespace ClaudeCodeWorkbench
         public static string Runs { get; private set; }
         public static string Messages { get; private set; }
         public static string Images { get; private set; }
+        public static string CliWorkspaces { get; private set; }
+        public static string SharedLibrary { get; private set; }
+        public static string SharedMcpFile { get { return Path.Combine(SharedLibrary ?? "", "mcp", "servers.json"); } }
         public static string SessionsFile { get { return Path.Combine(Data, "sessions.json"); } }
         public static string SettingsFile { get { return Path.Combine(Data, "settings.json"); } }
 
@@ -436,7 +461,12 @@ namespace ClaudeCodeWorkbench
             Runs = Path.Combine(Data, "runs");
             Messages = Path.Combine(Data, "messages");
             Images = Path.Combine(Workspace, "生成图片");
+            var parent = Directory.GetParent(Path.GetFullPath(Workspace));
+            var siblingRoot = parent == null ? Workspace : parent.FullName;
+            CliWorkspaces = Path.Combine(siblingRoot, "AgentCli");
+            SharedLibrary = Path.Combine(siblingRoot, "AgentShared");
             foreach (var path in new[] { Workspace, Data, Runs, Messages, Images }) Directory.CreateDirectory(path);
+            WorkspaceLayout.Initialize();
         }
     }
 
@@ -544,6 +574,7 @@ namespace ClaudeCodeWorkbench
     internal static class NativeMethods
     {
         public const int SW_RESTORE = 9;
+        public const int SW_SHOW = 5;
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         public static extern bool SetDllDirectory(string path);
@@ -576,6 +607,7 @@ namespace ClaudeCodeWorkbench
         {
             var handle = FindWindow(null, NativeHost.WindowTitle);
             if (handle == IntPtr.Zero) return;
+            ShowWindow(handle, SW_SHOW);
             ShowWindow(handle, SW_RESTORE);
             SetForegroundWindow(handle);
         }

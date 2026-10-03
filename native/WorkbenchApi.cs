@@ -22,6 +22,9 @@ namespace ClaudeCodeWorkbench
     /// </summary>
     internal sealed class WorkbenchApi
     {
+        private static readonly object DshCatalogGate = new object();
+        private static JObject _dshCatalogCache;
+        private static DateTimeOffset _dshCatalogFetchedAt;
         private readonly object _gitGate = new object();
         private readonly object _terminalGate = new object();
         private readonly AgentEventStore _eventStore;
@@ -81,6 +84,11 @@ namespace ClaudeCodeWorkbench
                 SaveProject(selected);
                 await WriteJson(context.Response, ProjectObject(selected)); return true;
             }
+            if (method == "POST" && path == "/api/workbench/tasks/workspace")
+            {
+                var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
+                await WriteJson(context.Response, CreateTaskWorkspace(body)); return true;
+            }
             if (method == "POST" && path == "/api/workbench/projects/remove")
             {
                 var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
@@ -133,6 +141,28 @@ namespace ClaudeCodeWorkbench
             if (method == "GET" && path == "/api/workbench/extensions")
             {
                 await WriteJson(context.Response, Extensions(HttpQuery.Get(context.Request, "workspace"))); return true;
+            }
+            if (method == "GET" && path == "/api/workbench/extensions/content")
+            {
+                await WriteJson(context.Response, ExtensionContent(HttpQuery.Get(context.Request, "workspace"), HttpQuery.Get(context.Request, "kind"), HttpQuery.Get(context.Request, "name"), HttpQuery.Get(context.Request, "itemPath"))); return true;
+            }
+            if (method == "POST" && path == "/api/workbench/extensions/dsh-adapt-report")
+            {
+                var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
+                await WriteJson(context.Response, BuildDshGeneralAdapterReport(body)); return true;
+            }
+            if (method == "POST" && path == "/api/workbench/extensions/curated-descriptions")
+            {
+                var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
+                await WriteJson(context.Response, await CuratedDescriptionsAsync(body)); return true;
+            }            if (method == "GET" && path == "/api/workbench/extensions/dsh-catalog")
+            {
+                await WriteJson(context.Response, await DshCatalogAsync()); return true;
+            }
+            if (method == "POST" && path == "/api/workbench/extensions/dsh-download")
+            {
+                var body = JsonUtil.ObjectOrEmpty(await ApiServer.ReadBody(context.Request));
+                await WriteJson(context.Response, await DownloadDshPackageAsync(body)); return true;
             }
             if (method == "GET" && path == "/api/workbench/skins")
             {
@@ -774,24 +804,30 @@ namespace ClaudeCodeWorkbench
             var projectClaude = Path.Combine(root, ".claude");
             var skills = new JArray();
             var agents = new JArray();
-            foreach (var baseDir in new[] { Path.Combine(userClaude, "skills"), Path.Combine(projectClaude, "skills") })
+            foreach (var baseDir in new[] { Path.Combine(userClaude, "skills"), Path.Combine(projectClaude, "skills"), AppPaths.SharedLibrary == null ? "" : Path.Combine(AppPaths.SharedLibrary, "skills"), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "skills"), Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".agents", "skills") })
                 if (Directory.Exists(baseDir)) foreach (var dir in Directory.EnumerateDirectories(baseDir).Where(value => !Path.GetFileName(value).StartsWith(".", StringComparison.Ordinal)))
                 {
-                    var scope = baseDir.StartsWith(projectClaude, StringComparison.OrdinalIgnoreCase) ? "project" : "user";
-                    var item = new JObject { ["name"] = Path.GetFileName(dir), ["path"] = dir, ["scope"] = scope };
-                    foreach (var property in ExtensionTrustPolicy.AssessSkill(dir, scope).Properties()) item[property.Name] = property.Value.DeepClone();
+                    var scope = baseDir.StartsWith(projectClaude, StringComparison.OrdinalIgnoreCase) ? "project" : AppPaths.SharedLibrary != null && baseDir.StartsWith(AppPaths.SharedLibrary, StringComparison.OrdinalIgnoreCase) ? "shared" : baseDir.IndexOf(".codex", StringComparison.OrdinalIgnoreCase) >= 0 ? "codex" : baseDir.IndexOf(".agents", StringComparison.OrdinalIgnoreCase) >= 0 ? "agent" : "user";
+                    var item = new JObject { ["name"] = Path.GetFileName(dir), ["path"] = dir, ["scope"] = scope, ["description"] = SkillDescription(Path.Combine(dir, "SKILL.md")),
+                        ["delivery"] = scope == "shared" ? "matched-text-adapter" : "native-or-workbench", ["compatibility"] = scope == "shared" ? new JArray("claude", "codex", "dsh", "pi") : new JArray() };
+                    if (scope == "project" || scope == "shared" || scope == "user") foreach (var property in ExtensionTrustPolicy.AssessSkill(dir, scope).Properties()) item[property.Name] = property.Value.DeepClone();
+                    else item["active"] = true;
                     skills.Add(item);
                 }
-            foreach (var baseDir in new[] { Path.Combine(userClaude, "agents"), Path.Combine(projectClaude, "agents") })
+            foreach (var baseDir in new[] { Path.Combine(userClaude, "agents"), Path.Combine(projectClaude, "agents"), AppPaths.SharedLibrary == null ? "" : Path.Combine(AppPaths.SharedLibrary, "agents") })
                 if (Directory.Exists(baseDir)) foreach (var file in Directory.EnumerateFiles(baseDir, "*.md"))
                 {
-                    var name = Path.GetFileNameWithoutExtension(file); var scope = baseDir.StartsWith(projectClaude, StringComparison.OrdinalIgnoreCase) ? "project" : "user";
+                    var name = Path.GetFileNameWithoutExtension(file); var scope = baseDir.StartsWith(projectClaude, StringComparison.OrdinalIgnoreCase) ? "project" : baseDir.StartsWith(AppPaths.SharedLibrary, StringComparison.OrdinalIgnoreCase) ? "shared" : "user";
                     var item = new JObject { ["name"] = name, ["path"] = file, ["scope"] = scope };
                     foreach (var property in ExtensionTrustPolicy.AssessAgent(file, scope).Properties()) item[property.Name] = property.Value.DeepClone();
                     agents.Add(item);
                 }
             var settings = MergeSettings(Path.Combine(userClaude, "settings.json"), Path.Combine(projectClaude, "settings.json"), Path.Combine(projectClaude, "settings.local.json"));
             var mcp = JsonUtil.Read(Path.Combine(root, ".mcp.json"), new JObject()) as JObject ?? new JObject();
+            var sharedMcp = JsonUtil.Read(AppPaths.SharedMcpFile, new JObject()) as JObject ?? new JObject();
+            var mergedMcpServers = new JObject();
+            foreach (var property in (sharedMcp["mcpServers"] as JObject ?? new JObject()).Properties()) { var value = property.Value.DeepClone() as JObject ?? new JObject(); value["scope"] = "所有 Agent 共享"; mergedMcpServers[property.Name] = value; }
+            foreach (var property in (mcp["mcpServers"] as JObject ?? new JObject()).Properties()) { var value = property.Value.DeepClone() as JObject ?? new JObject(); value["scope"] = "当前项目"; mergedMcpServers[property.Name] = value; }
             var hooks = settings["hooks"] as JObject ?? new JObject();
             var plugins = settings["enabledPlugins"] as JObject ?? new JObject();
             var trust = ExtensionTrustPolicy.WorkspaceSummary(root);
@@ -811,14 +847,391 @@ namespace ClaudeCodeWorkbench
             return new JObject
             {
                 ["skills"] = skills, ["agents"] = agents,
-                ["mcpServers"] = RedactedMcpServers(mcp["mcpServers"] ?? settings["mcpServers"]),
+                ["mcpServers"] = RedactedMcpServers(mergedMcpServers.Count > 0 ? mergedMcpServers : settings["mcpServers"]),
                 ["mcpRuntime"] = mcpRuntime,
-                ["hooks"] = hooks, ["plugins"] = plugins,
+                ["hooks"] = hooks, ["plugins"] = plugins, ["pluginCatalog"] = PluginCatalog(userClaude, plugins),
                 ["trust"] = trust, ["controls"] = trust["controls"]?.DeepClone() ?? new JArray(),
                 ["claudeMd"] = new JArray(FindClaudeMd(root).Take(100)),
                 ["userRoot"] = userClaude, ["projectRoot"] = projectClaude,
-                ["mcpFile"] = Path.Combine(root, ".mcp.json"), ["mcpFileExists"] = File.Exists(Path.Combine(root, ".mcp.json"))
+                ["mcpFile"] = Path.Combine(root, ".mcp.json"), ["mcpFileExists"] = File.Exists(Path.Combine(root, ".mcp.json")), ["sharedMcpFile"] = AppPaths.SharedMcpFile, ["sharedMcpFileExists"] = File.Exists(AppPaths.SharedMcpFile)
             };
+        }
+
+        private static string SkillDescription(string file)
+        {
+            if (!File.Exists(file)) return "";
+            try
+            {
+                foreach (var line in File.ReadLines(file).Take(40))
+                    if (line.StartsWith("description:", StringComparison.OrdinalIgnoreCase)) return line.Substring(12).Trim().Trim('"', '\'');
+            }
+            catch { }
+            return "";
+        }
+
+        private static JArray PluginCatalog(string userClaude, JObject enabledPlugins)
+        {
+            var result = new JArray();
+            var sharedRoot = AppPaths.SharedLibrary == null ? "" : Path.Combine(AppPaths.SharedLibrary, "plugins");
+            if (Directory.Exists(sharedRoot)) foreach (var dir in Directory.EnumerateDirectories(sharedRoot).Take(300))
+            {
+                var manifestPath = Path.Combine(dir, "plugin.json");
+                if (!File.Exists(manifestPath)) manifestPath = Path.Combine(dir, ".codex-plugin", "plugin.json");
+                if (!File.Exists(manifestPath)) continue;
+                JObject manifest; try { manifest = JsonUtil.Read(manifestPath, new JObject()) as JObject ?? new JObject(); } catch { manifest = new JObject(); }
+                result.Add(new JObject { ["id"] = "shared:" + Path.GetFileName(dir), ["name"] = (string)manifest["name"] ?? Path.GetFileName(dir),
+                    ["description"] = (string)manifest["description"] ?? "", ["agent"] = "所有 Agent", ["scope"] = "shared", ["enabled"] = false, ["delivery"] = "catalog-only",
+                    ["path"] = dir, ["manifestPath"] = manifestPath });
+            }
+            var root = Path.Combine(userClaude, "plugins", "marketplaces");
+            if (Directory.Exists(root)) foreach (var marketplace in Directory.EnumerateDirectories(root))
+            {
+                var pluginRoot = Path.Combine(marketplace, "plugins");
+                if (!Directory.Exists(pluginRoot)) continue;
+                foreach (var dir in Directory.EnumerateDirectories(pluginRoot).Take(300))
+                {
+                    var name = Path.GetFileName(dir);
+                    var manifestPath = Path.Combine(dir, ".claude-plugin", "plugin.json");
+                    JObject manifest; try { manifest = JsonUtil.Read(manifestPath, new JObject()) as JObject ?? new JObject(); } catch { manifest = new JObject(); }
+                    var id = name + "@" + Path.GetFileName(marketplace);
+                    result.Add(new JObject { ["id"] = id, ["name"] = (string)manifest["name"] ?? name, ["description"] = (string)manifest["description"] ?? "", ["marketplace"] = Path.GetFileName(marketplace), ["agent"] = "Claude", ["enabled"] = (bool?)enabledPlugins[id] ?? false, ["path"] = dir });
+                }
+            }
+            var codexRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex", "plugins", "cache");
+            if (Directory.Exists(codexRoot)) foreach (var publisher in Directory.EnumerateDirectories(codexRoot).Take(20))
+                foreach (var package in Directory.EnumerateDirectories(publisher).Take(100))
+                    foreach (var version in Directory.EnumerateDirectories(package).Take(10))
+                    {
+                        var manifestPath = Path.Combine(version, ".codex-plugin", "plugin.json");
+                        if (!File.Exists(manifestPath)) manifestPath = Path.Combine(version, "plugin.json");
+                        if (!File.Exists(manifestPath)) continue;
+                        JObject manifest; try { manifest = JsonUtil.Read(manifestPath, new JObject()) as JObject ?? new JObject(); } catch { manifest = new JObject(); }
+                        var name = (string)manifest["name"] ?? Path.GetFileName(package);
+                        result.Add(new JObject { ["id"] = "codex:" + Path.GetFileName(publisher) + "/" + Path.GetFileName(package) + "/" + Path.GetFileName(version),
+                            ["name"] = name, ["description"] = (string)manifest["description"] ?? "", ["agent"] = "Codex", ["cached"] = true, ["enabled"] = false,
+                            ["path"] = version, ["manifestPath"] = manifestPath });
+                    }
+            return result;
+        }
+
+        private static JObject ExtensionContent(string workspace, string kind, string name, string itemPath)
+        {
+            var catalog = Extensions(workspace);
+            if (kind == "skill")
+            {
+                var item = (catalog["skills"] as JArray ?? new JArray()).OfType<JObject>().FirstOrDefault(value => string.Equals((string)value["name"], name, StringComparison.OrdinalIgnoreCase) && string.Equals((string)value["path"], itemPath, StringComparison.OrdinalIgnoreCase));
+                if (item == null) throw new InvalidOperationException("Skill 不存在");
+                var file = Path.Combine((string)item["path"], "SKILL.md");
+                return new JObject { ["name"] = name, ["kind"] = kind, ["description"] = item["description"], ["content"] = File.Exists(file) ? Limit(File.ReadAllText(file), 100000) : "", ["active"] = item["active"] };
+            }
+            if (kind == "plugin")
+            {
+                var item = (catalog["pluginCatalog"] as JArray ?? new JArray()).OfType<JObject>().FirstOrDefault(value => string.Equals((string)value["id"], name, StringComparison.OrdinalIgnoreCase) && string.Equals((string)value["path"], itemPath, StringComparison.OrdinalIgnoreCase));
+                if (item == null) throw new InvalidOperationException("Plugin 不存在");
+                var file = (string)item["manifestPath"] ?? Path.Combine((string)item["path"], ".claude-plugin", "plugin.json");
+                return new JObject { ["name"] = item["name"], ["kind"] = kind, ["description"] = item["description"], ["content"] = File.Exists(file) ? Limit(File.ReadAllText(file), 100000) : "", ["active"] = item["enabled"] };
+            }
+            throw new InvalidOperationException("不支持的扩展类型");
+        }
+
+        private static async Task<JObject> CuratedDescriptionsAsync(JObject body)
+        {
+            var items = body["items"] as JArray ?? new JArray();
+            var result = new JArray();
+            foreach (var token in items.OfType<JObject>().Take(24))
+            {
+                var url = ((string)token["url"] ?? "").Trim();
+                var item = (JObject)token.DeepClone();
+                try
+                {
+                    Uri parsed;
+                    if (!Uri.TryCreate(url, UriKind.Absolute, out parsed) || parsed.Scheme != Uri.UriSchemeHttps)
+                        throw new InvalidOperationException("来源必须是 HTTPS");
+                    var allowed = parsed.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase) || parsed.Host.Equals("developers.openai.com", StringComparison.OrdinalIgnoreCase);
+                    if (!allowed) throw new InvalidOperationException("来源域名不在官方白名单");
+                    var fetchUrl = url;
+                    if (parsed.Host.Equals("github.com", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var parts = parsed.AbsolutePath.Trim('/').Split('/');
+                        if (parts.Length < 2) throw new InvalidOperationException("GitHub 仓库地址无效");
+                        fetchUrl = "https://api.github.com/repos/" + parts[0] + "/" + parts[1];
+                    }
+                    using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) })
+                    using (var request = new HttpRequestMessage(HttpMethod.Get, fetchUrl))
+                    {
+                        request.Headers.UserAgent.ParseAdd("OpenAgentWorkbench/curated-description");
+                        using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
+                        {
+                            response.EnsureSuccessStatusCode();
+                            var bytes = await ReadLimitedHttpContentAsync(response.Content, 512 * 1024);
+                            var text = Encoding.UTF8.GetString(bytes);
+                            var document = fetchUrl.IndexOf("api.github.com", StringComparison.OrdinalIgnoreCase) >= 0 ? JObject.Parse(text) : null;
+                            var description = document?["description"]?.ToString() ?? ExtractMetaDescription(text);
+                            if (String.IsNullOrWhiteSpace(description)) throw new InvalidDataException("官方来源没有基本描述");
+                            item["description"] = Limit(description.Trim(), 500);
+                            item["basicDescription"] = item["description"];
+                            item["descriptionSource"] = fetchUrl;
+                            item["descriptionFetchedAt"] = DateTimeOffset.UtcNow.ToString("o");
+                            item["descriptionStatus"] = "refreshed";
+                        }
+                    }
+                }
+                catch (Exception error)
+                {
+                    item["descriptionStatus"] = "fallback";
+                    item["descriptionError"] = Limit(error.Message, 240);
+                    item["description"] = item["description"] ?? item["name"]?.ToString() ?? "官方来源";
+                }
+                result.Add(item);
+            }
+            return new JObject { ["items"] = result, ["fetchedAt"] = DateTimeOffset.UtcNow.ToString("o"), ["source"] = "official-whitelist" };
+        }
+
+        private static string ExtractMetaDescription(string html)
+        {
+            var match = System.Text.RegularExpressions.Regex.Match(html ?? "", "<meta[^>]+(?:name|property)=[\\\"'](?:description|og:description)[\\\"'][^>]+content=[\\\"']([^\\\"']+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+            return match.Success ? WebUtility.HtmlDecode(match.Groups[1].Value) : "";
+        }
+        private static async Task<JObject> DshCatalogAsync()
+        {
+            lock (DshCatalogGate)
+                if (_dshCatalogCache != null && DateTimeOffset.UtcNow - _dshCatalogFetchedAt < TimeSpan.FromHours(1)) return (JObject)_dshCatalogCache.DeepClone();
+            const string endpoint = "https://registry.npmjs.org/-/v1/search?text=scope%3Adeepseek-ai&size=250";
+            string data;
+            try
+            {
+                using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(12) })
+                using (var request = new HttpRequestMessage(HttpMethod.Get, endpoint))
+                {
+                    request.Headers.UserAgent.ParseAdd("ClaudeCodeWorkbench/6.4");
+                    using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead))
+                    {
+                        response.EnsureSuccessStatusCode();
+                        if (response.Content.Headers.ContentLength > 3 * 1024 * 1024) throw new InvalidDataException("官方包目录超过大小限制");
+                        using (var stream = await response.Content.ReadAsStreamAsync())
+                        using (var buffer = new MemoryStream())
+                        {
+                            var chunk = new byte[8192]; int read;
+                            while ((read = await stream.ReadAsync(chunk, 0, chunk.Length)) > 0)
+                            {
+                                if (buffer.Length + read > 3 * 1024 * 1024) throw new InvalidDataException("官方包目录超过大小限制");
+                                buffer.Write(chunk, 0, read);
+                            }
+                            data = Encoding.UTF8.GetString(buffer.ToArray());
+                        }
+                    }
+                }
+                var source = JObject.Parse(data);
+                var packages = new JArray((source["objects"] as JArray ?? new JArray()).OfType<JObject>()
+                    .Select(value => value["package"] as JObject).Where(value => value != null)
+                    .Where(value => ((string)value["name"] ?? "").StartsWith("@deepseek-ai/dsh", StringComparison.Ordinal))
+                    .Select(value => new JObject { ["name"] = (string)value["name"], ["version"] = (string)value["version"] ?? "",
+                        ["description"] = Limit((string)value["description"] ?? "", 300), ["publisher"] = "DeepSeek AI",
+                        ["url"] = "https://www.npmjs.com/package/" + (string)value["name"], ["agent"] = "DSHarness" })
+                    .OrderBy(value => (string)value["name"]));
+                var result = new JObject { ["source"] = "npmjs.org · @deepseek-ai", ["officialRepository"] = "https://github.com/deepseek-ai/deepseek-harness",
+                    ["fetchedAt"] = DateTimeOffset.UtcNow.ToString("o"), ["items"] = packages, ["readOnly"] = true };
+                lock (DshCatalogGate) { _dshCatalogCache = result; _dshCatalogFetchedAt = DateTimeOffset.UtcNow; }
+                return (JObject)result.DeepClone();
+            }
+            catch (Exception error)
+            {
+                lock (DshCatalogGate) if (_dshCatalogCache != null)
+                {
+                    var stale = (JObject)_dshCatalogCache.DeepClone(); stale["stale"] = true; stale["error"] = Limit(error.Message, 300); return stale;
+                }
+                return new JObject { ["source"] = "npmjs.org · @deepseek-ai", ["items"] = new JArray(), ["error"] = Limit(error.Message, 300), ["readOnly"] = true };
+            }
+        }
+
+        private static async Task<JObject> DownloadDshPackageAsync(JObject body)
+        {
+            var name = ((string)body["name"] ?? "").Trim();
+            var version = ((string)body["version"] ?? "").Trim();
+            if (!System.Text.RegularExpressions.Regex.IsMatch(name, @"^@deepseek-ai/dsh[a-z0-9-]*$", System.Text.RegularExpressions.RegexOptions.CultureInvariant) ||
+                !System.Text.RegularExpressions.Regex.IsMatch(version, @"^[0-9A-Za-z][0-9A-Za-z.+-]{0,99}$", System.Text.RegularExpressions.RegexOptions.CultureInvariant))
+                throw new InvalidOperationException("只允许下载目录列出的 @deepseek-ai/dsh 官方包和明确版本");
+
+            var packageUrl = "https://registry.npmjs.org/" + name.Replace("/", "%2f");
+            JObject package;
+            using (var client = new HttpClient { Timeout = TimeSpan.FromSeconds(20) })
+            using (var response = await client.GetAsync(packageUrl, HttpCompletionOption.ResponseHeadersRead))
+            {
+                response.EnsureSuccessStatusCode();
+                var metadata = await ReadLimitedHttpContentAsync(response.Content, 2 * 1024 * 1024);
+                var document = JObject.Parse(Encoding.UTF8.GetString(metadata));
+                package = document["versions"]?[version] as JObject;
+                if (package == null || !string.Equals((string)package["name"], name, StringComparison.Ordinal) || !string.Equals((string)package["version"], version, StringComparison.Ordinal))
+                    throw new InvalidOperationException("npm registry 没有返回匹配的官方包和版本");
+                var repository = ((string)package["repository"]?["url"] ?? "").Replace("git+", "").TrimEnd('/');
+                if (repository.EndsWith(".git", StringComparison.OrdinalIgnoreCase)) repository = repository.Substring(0, repository.Length - 4);
+                if (!string.Equals(repository, "https://github.com/deepseek-ai/deepseek-harness", StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("包的仓库来源与 DSHarness 官方仓库不符");
+            }
+
+            var dist = package["dist"] as JObject ?? throw new InvalidOperationException("npm 包缺少 dist 元数据");
+            var tarball = (string)dist["tarball"] ?? "";
+            var integrity = (string)dist["integrity"] ?? "";
+            var shasum = ((string)dist["shasum"] ?? "").Trim();
+            Uri tarballUri;
+            if (!Uri.TryCreate(tarball, UriKind.Absolute, out tarballUri) || tarballUri.Scheme != Uri.UriSchemeHttps || !string.Equals(tarballUri.Host, "registry.npmjs.org", StringComparison.OrdinalIgnoreCase))
+                throw new InvalidOperationException("npm tarball 必须来自 HTTPS registry.npmjs.org");
+            var maxBytes = 64L * 1024 * 1024;
+            var id = Guid.NewGuid().ToString("N");
+            var directory = Path.Combine(AppPaths.SharedLibrary, "dsh-staging", id);
+            Directory.CreateDirectory(directory);
+            var safeFile = name.Substring("@deepseek-ai/".Length) + "-" + version + ".tgz";
+            var archivePath = Path.Combine(directory, safeFile);
+            byte[] archive;
+            var bashCommand = BuildDshBashDownloadCommand(tarballUri.AbsoluteUri, archivePath, integrity, shasum);
+            try
+            {
+                await RunDshBashDownloadAsync(bashCommand);
+                archive = File.ReadAllBytes(archivePath);
+                if (archive.LongLength > maxBytes) throw new InvalidDataException("下载内容超过大小限制");
+            }
+            catch
+            {
+                try { if (File.Exists(archivePath)) File.Delete(archivePath); } catch { }
+                try { if (Directory.Exists(directory)) Directory.Delete(directory, true); } catch { }
+                throw;
+            }
+            var integrityOk = false;
+            if (integrity.StartsWith("sha512-", StringComparison.Ordinal))
+            {
+                var expected = Convert.FromBase64String(integrity.Substring("sha512-".Length));
+                using (var sha = SHA512.Create()) integrityOk = FixedTimeEquals(expected, sha.ComputeHash(archive));
+            }
+            if (!integrityOk && shasum.Length == 40 && shasum.All(Uri.IsHexDigit))
+            {
+                using (var sha = SHA1.Create()) integrityOk = string.Equals(BitConverter.ToString(sha.ComputeHash(archive)).Replace("-", ""), shasum, StringComparison.OrdinalIgnoreCase);
+            }
+            if (!integrityOk) throw new InvalidDataException("npm tarball 完整性校验失败，未写入共享库");
+
+            var result = new JObject
+            {
+                ["id"] = id, ["name"] = name, ["version"] = version, ["path"] = archivePath,
+                ["size"] = archive.Length, ["integrity"] = integrity, ["repository"] = "https://github.com/deepseek-ai/deepseek-harness",
+                ["scope"] = "agent-exclusive", ["agent"] = "DSHarness", ["compatibleHarnesses"] = new JArray("dsh"), ["executed"] = false,
+                ["bashCommand"] = bashCommand
+            };
+            JsonUtil.WriteAtomic(Path.Combine(directory, "package.json"), package);
+            JsonUtil.WriteAtomic(Path.Combine(directory, "staging.json"), result);
+            return result;
+        }
+
+        private static JObject BuildDshGeneralAdapterReport(JObject body)
+        {
+            var capabilities = body["capabilities"] as JArray;
+            var items = new JArray();
+            if (capabilities == null || capabilities.Count == 0)
+            {
+                capabilities = new JArray("skill-markdown", "mcp-server-config", "runtime-code", "event-hook", "ui-plugin");
+            }
+            foreach (var token in capabilities)
+            {
+                var capability = (token as JObject)?["type"]?.ToString() ?? token?.ToString() ?? "unknown";
+                var normalized = capability.Trim().ToLowerInvariant();
+                string status, target, reason;
+                if (normalized.Contains("skill") || normalized.Contains("markdown") || normalized.Contains("prompt"))
+                {
+                    status = "auto-adaptable"; target = "general.skill.v1"; reason = "纯文本步骤可转换为共享 Skill；工具权限仍按目标内核重新校验";
+                }
+                else if (normalized.Contains("mcp") || normalized.Contains("server") || normalized.Contains("tool-config"))
+                {
+                    status = "conversation-required"; target = "general.mcp.v1"; reason = "可提取服务器声明，但命令、环境变量和权限必须由对话逐项确认";
+                }
+                else if (normalized.Contains("runtime") || normalized.Contains("code") || normalized.Contains("event") || normalized.Contains("hook"))
+                {
+                    status = "unsupported"; target = ""; reason = "依赖 DSHarness 运行时、事件或代码生命周期，不能安全地自动变成共享接口";
+                }
+                else if (normalized.Contains("ui") || normalized.Contains("panel"))
+                {
+                    status = "unsupported"; target = ""; reason = "内核专属 UI 扩展没有广义运行时契约";
+                }
+                else
+                {
+                    status = "conversation-required"; target = "general.extension.v1"; reason = "能力类型不明确，需要对话读取 manifest 和行为后决定映射";
+                }
+                items.Add(new JObject { ["sourceCapability"] = capability, ["targetInterface"] = target, ["status"] = status, ["reason"] = reason, ["shared"] = false });
+            }
+            var auto = items.OfType<JObject>().Count(x => (string)x["status"] == "auto-adaptable");
+            var unsupported = items.OfType<JObject>().Count(x => (string)x["status"] == "unsupported");
+            return new JObject
+            {
+                ["schemaVersion"] = 1,
+                ["adapter"] = "dsharness-to-general",
+                ["sourceScope"] = "agent-exclusive",
+                ["sourceHarness"] = "dsh",
+                ["targetScope"] = "shared-candidate",
+                ["automatic"] = true,
+                ["conversationConversionRequired"] = true,
+                ["items"] = items,
+                ["summary"] = new JObject { ["autoAdaptable"] = auto, ["conversationRequired"] = items.OfType<JObject>().Count(x => (string)x["status"] == "conversation-required"), ["unsupported"] = unsupported },
+                ["warning"] = unsupported > 0 ? "部分能力无法转换为广义共享接口；完成对话转换后仍必须保留未适配清单。" : "自动计划只生成共享候选，不会把原始 DSHarness 包直接放入共享区。"
+            };
+        }
+        private static async Task<byte[]> ReadLimitedHttpContentAsync(HttpContent content, long maximum)
+        {
+            if (content.Headers.ContentLength.HasValue && content.Headers.ContentLength.Value > maximum)
+                throw new InvalidDataException("下载内容超过大小限制");
+            using (var input = await content.ReadAsStreamAsync())
+            using (var output = new MemoryStream())
+            {
+                var buffer = new byte[8192]; int read;
+                while ((read = await input.ReadAsync(buffer, 0, buffer.Length)) > 0)
+                {
+                    if (output.Length + read > maximum) throw new InvalidDataException("下载内容超过大小限制");
+                    output.Write(buffer, 0, read);
+                }
+                return output.ToArray();
+            }
+        }
+
+        private static bool FixedTimeEquals(byte[] left, byte[] right)
+        {
+            if (left == null || right == null || left.Length != right.Length) return false;
+            var different = 0; for (var i = 0; i < left.Length; i++) different |= left[i] ^ right[i];
+            return different == 0;
+        }
+
+        private static string BuildDshBashDownloadCommand(string url, string windowsPath, string integrity, string shasum)
+        {
+            var full = Path.GetFullPath(windowsPath);
+            var target = full.Length > 2 && full[1] == ':' ? "/mnt/" + char.ToLowerInvariant(full[0]) + full.Substring(2).Replace('\\', '/') : full.Replace('\\', '/');
+            target = target.Replace("'", "'\\''");
+            var expected = integrity.StartsWith("sha512-", StringComparison.Ordinal) ? integrity.Substring(7) : "";
+            var expectedSha1 = shasum ?? "";
+            return "mkdir -p '" + target.Substring(0, target.LastIndexOf('/')) + "' && curl --fail --location --proto '=https' --proto-redir '=https' --tlsv1.2 '" + url + "' -o '" + target + "' && " +
+                (expected.Length > 0 ? "test \"$(openssl dgst -sha512 -binary '" + target + "' | openssl base64 -A)\" = '" + expected + "'" : "test \"$(sha1sum '" + target + "' | cut -d ' ' -f1)\" = '" + expectedSha1 + "'");
+        }
+
+        private static async Task RunDshBashDownloadAsync(string command)
+        {
+            var start = new ProcessStartInfo("bash.exe", "--noprofile --norc -c " + Quote(command))
+            {
+                UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden,
+                RedirectStandardOutput = true, RedirectStandardError = true
+            };
+            using (var process = new Process { StartInfo = start })
+            {
+                try { if (!process.Start()) throw new InvalidOperationException("无法启动 Bash 下载器"); }
+                catch (Exception error) { throw new InvalidOperationException("找不到 Bash/WSL。请安装 Bash 后重试；未执行任何包代码。", error); }
+                var stdout = process.StandardOutput.ReadToEndAsync();
+                var stderr = process.StandardError.ReadToEndAsync();
+                if (!process.WaitForExit(120000))
+                {
+                    try { process.Kill(); } catch { }
+                    throw new TimeoutException("Bash 下载超过 120 秒，已停止下载进程");
+                }
+                await Task.WhenAll(stdout, stderr);
+                if (process.ExitCode != 0)
+                {
+                    var detail = (stderr.Result ?? "").Trim();
+                    if (detail.Length > 400) detail = detail.Substring(0, 400);
+                    throw new InvalidOperationException("Bash 下载或 registry 完整性检查失败：" + (detail.Length == 0 ? "exit " + process.ExitCode : detail));
+                }
+            }
         }
 
         private static JObject RedactedMcpServers(JToken token)
@@ -843,6 +1256,7 @@ namespace ClaudeCodeWorkbench
                     ["url"] = url,
                     ["argumentCount"] = server["args"] is JArray args ? args.Count : 0,
                     ["environmentKeys"] = server["env"] is JObject env ? new JArray(env.Properties().Select(item => item.Name)) : new JArray(),
+                    ["scope"] = (string)server["scope"] ?? "Agent 专属",
                     ["redacted"] = true
                 };
             }
@@ -856,7 +1270,7 @@ namespace ClaudeCodeWorkbench
             var name = ((string)body["name"] ?? "").Trim();
             if (name.Length < 2 || name.Length > 64 || name.Any(ch => !char.IsLetterOrDigit(ch) && ch != '-' && ch != '_'))
                 throw new InvalidOperationException("名称只能包含字母、数字、连字符和下划线，长度为 2-64");
-            var claudeRoot = Path.Combine(root, ".claude");
+            var claudeRoot = AppPaths.SharedLibrary;
             string file;
             string content;
             if (type == "skill")
@@ -973,7 +1387,7 @@ namespace ClaudeCodeWorkbench
             if (id.Length < 2 || id.Length > 64 || id.Any(ch => !char.IsLetterOrDigit(ch) && ch != '-' && ch != '_')) throw new InvalidOperationException("扩展 id 只能使用字母、数字、- 和 _，长度 2-64");
             var sourceRoot = Path.GetDirectoryName(Path.GetFullPath(manifestPath));
             var trust = ValidateSkinPackage(manifest, sourceRoot);
-            var projectClaude = Path.Combine(workspace, ".claude"); Directory.CreateDirectory(projectClaude);
+            var projectClaude = AppPaths.SharedLibrary; Directory.CreateDirectory(projectClaude);
             if (type == "agent")
             {
                 var sourceFile = new[] { Path.Combine(sourceRoot, "agent.md"), Path.Combine(sourceRoot, id + ".md") }.FirstOrDefault(File.Exists);
@@ -1666,6 +2080,37 @@ namespace ClaudeCodeWorkbench
             var candidate = string.IsNullOrWhiteSpace(value) ? (required ? AppPaths.Workspace : "") : Path.GetFullPath(value);
             if (required && !Directory.Exists(candidate)) throw new DirectoryNotFoundException("工作区不存在：" + candidate);
             return candidate;
+        }
+
+        private static JObject CreateTaskWorkspace(JObject body)
+        {
+            var sessionId = SafeId(((string)body["sessionId"] ?? "").Trim());
+            var harness = ((string)body["harness"] ?? "claude").Trim().ToLowerInvariant();
+            if (harness == "dsharness" || harness == "deepseek-harness") harness = "dsh";
+            if (!new[] { "claude", "codex", "pi", "dsh" }.Contains(harness)) throw new InvalidOperationException("不支持的内核工作区：" + harness);
+            var title = OneLine((string)body["title"] ?? "任务", 80);
+            var invalid = new HashSet<char>(Path.GetInvalidFileNameChars());
+            var buffer = new StringBuilder();
+            var separator = false;
+            foreach (var ch in title)
+            {
+                if (invalid.Contains(ch) || char.IsWhiteSpace(ch) || ch == '/' || ch == '\\' || ch == ':' || ch == '…') { separator = buffer.Length > 0; continue; }
+                if (separator && buffer.Length > 0 && buffer[buffer.Length - 1] != '-') buffer.Append('-');
+                separator = false;
+                if (char.IsLetterOrDigit(ch) || ch == '-' || ch == '_' || ch > 127) buffer.Append(ch);
+                if (buffer.Length >= 48) break;
+            }
+            var readable = buffer.ToString().Trim(' ', '-', '.');
+            if (readable.Length == 0) readable = "任务";
+            var suffix = new string(sessionId.Where(char.IsLetterOrDigit).Take(8).ToArray());
+            var folderName = readable + "-" + suffix;
+            var root = Path.GetFullPath(WorkspaceLayout.HarnessRoot(harness));
+            Directory.CreateDirectory(root);
+            var workspace = Path.GetFullPath(Path.Combine(root, folderName));
+            if (!WorkspaceLayout.IsInside(root, workspace)) throw new UnauthorizedAccessException("任务目录超出内核工作区");
+            var created = !Directory.Exists(workspace);
+            Directory.CreateDirectory(workspace);
+            return new JObject { ["workspace"] = workspace, ["root"] = root, ["folderName"] = folderName, ["harness"] = harness, ["created"] = created };
         }
 
         private static string ResolveInside(string root, string relative)

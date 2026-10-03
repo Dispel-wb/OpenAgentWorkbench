@@ -35,6 +35,16 @@ $resourceTrace=[Collections.Generic.List[object]]::new()
 $mutexScope='pi-'+[guid]::NewGuid().ToString('N')
 $fixture=$null;$hostProcess=$null;$jobId='';$jobIds=@();$hostBase='';$headers=@{}
 function Post($route,$body){Invoke-RestMethod ($hostBase+$route) -Headers $headers -Method Post -ContentType 'application/json' -Body ([Text.Encoding]::UTF8.GetBytes(($body|ConvertTo-Json -Depth 20 -Compress))) -TimeoutSec 20}
+function Test-SameProcessIdentity($snapshot){
+    if($null-eq$snapshot-or[int]$snapshot.ProcessId-le0){return $false}
+    $current=Get-CimInstance Win32_Process -Filter "ProcessId=$([int]$snapshot.ProcessId)" -ErrorAction SilentlyContinue
+    if($null-eq$current){return $false}
+    $sameStart=$false
+    try{$sameStart=[Math]::Abs(($current.CreationDate-$snapshot.CreationDate).TotalMilliseconds)-le1000}catch{$sameStart=$false}
+    if(-not$sameStart){return $false}
+    $expectedPath=[string]$snapshot.ExecutablePath;$actualPath=[string]$current.ExecutablePath
+    return [string]::IsNullOrWhiteSpace($expectedPath)-or[string]::IsNullOrWhiteSpace($actualPath)-or[string]::Equals($expectedPath,$actualPath,[StringComparison]::OrdinalIgnoreCase)
+}
 function Save-PiSoak([string]$State,[string]$Failure=''){
     $now=[DateTimeOffset]::UtcNow
     $progress=[ordered]@{
@@ -149,9 +159,11 @@ try {
     } while((-not$bridge-or$children.Count-eq 0)-and(Get-Date)-lt$deadline)
     if(-not$bridge){throw 'Pi bridge process not found before cancellation'}
     if($children.Count-eq 0){throw 'Pi core process not found before cancellation'}
+    $tracked=@(@($bridge)+$children|ForEach-Object{[pscustomobject]@{ProcessId=[int]$_.ProcessId;CreationDate=$_.CreationDate;ExecutablePath=[string]$_.ExecutablePath;CommandLine=[string]$_.CommandLine}})
     Post "/api/chat/stop/$jobId" @{}|Out-Null
-    Start-Sleep -Milliseconds 700
-    foreach($item in @($bridge)+$children){if(Get-Process -Id $item.ProcessId -ErrorAction SilentlyContinue){throw "Stop left Pi process alive: $($item.ProcessId)"}}
+    $stopDeadline=(Get-Date).AddSeconds(5)
+    do{$remaining=@($tracked|Where-Object{Test-SameProcessIdentity $_});if($remaining.Count){Start-Sleep -Milliseconds 100}}while($remaining.Count-and(Get-Date)-lt$stopDeadline)
+    if($remaining.Count){$details=@($remaining|ForEach-Object{"$($_.ProcessId) $($_.ExecutablePath)"})-join'; ';throw "Stop left Pi process identity alive after 5 seconds: $details"}
     $cycles++
     Observe-PiSoak
     if($SoakHours-gt0){

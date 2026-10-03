@@ -17,7 +17,7 @@ Pi 必须显式选择，固定适配 **0.85.1**。支持中文流式、多轮与
 
 Codex 自动查找设置中的路径、`CLAUDE_GUI_CODEX_EXE`、PATH、桌面安装的版本化 bin 目录。不需要安装 Claude Code。导入的 Chat Completions 接口不会被直接当作 Codex Responses 接口。
 
-本轮真实测试的 Codex CLI 为 0.152.1。已信任的项目说明和启用的工作区记忆会作为带明确标签的用户上下文交给 Codex/DSHarness；不是伪装成核心 system prompt，也不会改变其权限策略。Skill 元数据和文件地址按需提供，不预载全部 Skill 正文。工作台的 Claude 专用 MCP/Agent 配置不会自动注入其他核心；它们使用各自的扩展配置。
+本轮真实测试的 Codex CLI 为 0.152.1。已信任的项目说明和启用的工作区记忆会作为带明确标签的用户上下文交给 Codex/DSHarness；不是伪装成核心 system prompt，也不会改变其权限策略。共享库中已启用且与本轮请求匹配的 Skill，会向 Claude/Codex/DSHarness/Pi 注入限量正文（最多 4 项、每项 6000 字符、总计 16000 字符）；Claude 用户与项目 Skill 只交给 Claude。其余 Skill 仅显示元数据，不预载正文。工具、脚本与权限仍由所选核心决定；工作台的 Claude 专用 MCP/Agent 配置不会自动注入其他核心。
 
 DSHarness 使用官方 `@deepseek-ai/dsh`，当前验证版本 **0.1.2-alpha.5**。验证时 npm latest 的 0.1.1-rc.2 没有 SDK profile，不能用于此适配器。需要 Node.js >= 22.19。
 

@@ -5,7 +5,8 @@ param(
     [string]$NewtonsoftJsonPath = '',
     [string]$PythonPath = '',
     [string]$DependencyRoot = '',
-    [string]$OutputPath = ''
+    [string]$OutputPath = '',
+    [switch]$SyncInstalled
 )
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -118,3 +119,9 @@ Write-Host "Native EXE: $($item.FullName)"
 Write-Host "Size: $([math]::Round($item.Length / 1MB, 2)) MB"
 Write-Host "SHA256: $hash"
 Write-Host "Edition: $Edition"
+if ($SyncInstalled -and -not $isOpenSource) {
+    $sync = Join-Path $root 'sync_local_version.ps1'
+    if (-not (Test-Path -LiteralPath $sync)) { throw 'sync_local_version.ps1 is missing' }
+    & $sync -Executable $output
+    if ($LASTEXITCODE -ne 0) { throw "Local version synchronization failed: $LASTEXITCODE" }
+}

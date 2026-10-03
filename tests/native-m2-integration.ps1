@@ -68,9 +68,8 @@ try {
     $read=Api $connection '/api/permissions/request' 'POST' @{jobId=$job.jobId;toolName='Read';input=@{file_path=(Join-Path $worktree 'base.txt')}};$readResult=Api $connection ("/api/permissions/result/$($read.id)")
     if(-not $read.automatic -or $readResult.decision.behavior -ne 'allow'){throw 'Safe read was not auto-allowed'}
     $delete=Api $connection '/api/permissions/request' 'POST' @{jobId=$job.jobId;toolName='Bash';input=@{command='Remove-Item -Recurse target'}}
-    if($delete.state -ne 'pending'){throw 'Destructive command did not require approval'}
-    Api $connection '/api/permissions/respond' 'POST' @{id=$delete.id;behavior='deny';message='stress deny'}|Out-Null;$deleteResult=Api $connection ("/api/permissions/result/$($delete.id)")
-    if($deleteResult.decision.behavior -ne 'deny'){throw 'Destructive decision was not enforced'}
+    $deleteResult=Api $connection ("/api/permissions/result/$($delete.id)")
+    if(-not $delete.automatic -or $deleteResult.decision.behavior -ne 'allow'){throw 'Agent full-access mode unexpectedly requested approval for a destructive command'}
     $config=Get-Content -LiteralPath (Join-Path $workspace ".claude-gui-v2\runs\$($job.jobId)\permissions.mcp.json") -Raw -Encoding UTF8
     if($config.Contains($connection.Secret) -or $config.Contains('CLAUDE_GUI_PERMISSION_SECRET"')){throw 'Plaintext Host secret leaked into permission config'}
     $diff=Api $connection ("/api/workbench/task/diff?jobId=$($job.jobId)&path="+[uri]::EscapeDataString('agent-change.txt'))
@@ -88,7 +87,7 @@ try {
     $deleted=Api $connection ("/api/sessions/${session}") 'DELETE' @{workspace=$workspace;transcriptIds=@($session)}
     if([long]$deleted.transcriptsDeleted -lt 2 -or (Test-Path -LiteralPath $sourceTranscript) -or (Test-Path -LiteralPath $workerTranscript) -or (Test-Path -LiteralPath ($workerTranscript+'.workbench.json'))){throw 'Permanent delete did not remove every exact transcript mirror'}
     $sourceTranscript='';$workerTranscript=''
-    [pscustomobject]@{TaskPermissionManifest='OK';SafeReadAutoAllow='OK';DestructiveApproval='OK';ProtectedMcpSecret='OK';GitWorktree='OK';ResumeAcrossIsolation='OK';TranscriptMirror='OK';LatestMirrorHistory=$historyPreview.historyInputTokens;SourceWorkspaceLookup='OK';PermanentMirrorDelete='OK';SourceUntouchedBeforeReview='OK';DiffReview='OK';PartialReviewApply='OK';DiscardRemaining='OK';UndoApplied='OK';JobId=$job.jobId;Root=$root}|Format-List
+    [pscustomobject]@{TaskPermissionManifest='OK';SafeReadAutoAllow='OK';AgentNoApproval='OK';ProtectedMcpSecret='OK';GitWorktree='OK';ResumeAcrossIsolation='OK';TranscriptMirror='OK';LatestMirrorHistory=$historyPreview.historyInputTokens;SourceWorkspaceLookup='OK';PermanentMirrorDelete='OK';SourceUntouchedBeforeReview='OK';DiffReview='OK';PartialReviewApply='OK';DiscardRemaining='OK';UndoApplied='OK';JobId=$job.jobId;Root=$root}|Format-List
 }
 finally {
     Get-CimInstance Win32_Process|Where-Object{$_.ExecutablePath -eq $Executable -or $_.ExecutablePath -eq $fake}|ForEach-Object{Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue}

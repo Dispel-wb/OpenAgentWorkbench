@@ -2,9 +2,9 @@
 
 Open Agent Workbench 是一个面向 Windows 10/11 的中文 Agent 桌面工作台。它把图形界面、长期运行的本地 Host、任务队列、权限审批、终端、Skill/MCP 入口与多服务商模型适配放在同一个原生 EXE 中。
 
-> 当前公开版本是 **Preview**，用于代码审阅、试用和收集兼容性反馈，不代表正式版 1.0.0。程序尚未进行商业代码签名，请只从本仓库的 Releases 下载并核对 SHA-256。
+当前公开版本为 **v1.0.0**。2026-09-30 至 2026-10-03，固定候选完成四内核并行 72 小时验证：有效运行 259,211 秒，Claude、Codex、DSHarness、Pi 各 831 轮通过，失败数为 0，全部冻结输入在结束后复核一致。详细证据边界见 [v1.0.0 发布验收](docs/V1_RELEASE_READINESS.md)。
 
-候选分支正在验证带 1.0.0 元数据的未发布构建，以固定长期测试的 EXE 摘要。它尚未完成正式版验收；请查看[最新验收进展](docs/V1_RELEASE_READINESS.md)，不要把版本字段视作通过证据。
+程序尚未进行商业代码签名。请只从本仓库的 Releases 下载，并核对发布页列出的 SHA-256；Windows 可能显示未知发布者提示。
 
 ## 已具备的核心能力
 
@@ -16,13 +16,13 @@ Open Agent Workbench 是一个面向 Windows 10/11 的中文 Agent 桌面工作�
 - 深浅色主题以及 PNG + CSS + JSON 皮肤包导入。
 - 真正的 Claude Code / Codex CLI / DSHarness CLI 核心切换；认证、停止和能力边界详见 [命令行核心说明](docs/AGENT_WORKER_SDK.md)。
 
-## Preview 的边界
+## v1.0.0 的边界
 
 - 仅提供 Windows x64 构建；需要 Microsoft Edge WebView2 Runtime。
 - 发布的 EXE 未签名，Windows 可能显示未知发布者提示。
 - PDF 支持内嵌只读预览；DOCX/XLSX/PPTX 支持简化只读预览，DOCX/PPTX 可显示包内 PNG/JPEG。复杂图表、精确分页和文档编辑仍需系统应用。
 - 服务商兼容性依赖其 OpenAI/Anthropic 兼容程度；不同中转服务的流式字段仍可能需要适配。
-- 尚未完成正式版要求的 72 小时稳定性验证、干净 Windows 矩阵和证书签名流程。
+- 四内核本机 72 小时稳定性验证已经完成；干净 Win10/Win11 独立环境矩阵、商业证书签名和第三方真实云端服务兼容性仍需继续扩充。
 
 逐项差距、验收条件与最新修复见 [成熟度清单](docs/MATURITY_GAPS.md) 和 [验证状态](docs/VALIDATION_STATUS.md)。
 
@@ -58,6 +58,8 @@ python -m pip install Pillow==12.3.0
 ## 品牌与项目关系
 
 本项目不包含 Claude、Codex 或其他第三方产品的图像资产，也不隶属于或受 Anthropic、OpenAI、Microsoft 及任何模型服务商背书。相关名称仅用于说明兼容协议或用户可选的外部服务。
+
+新版桌面信息架构研究过 PI-Desktop 的公开产品页面与截图，但桌面壳层、布局契约和视觉实现均由本项目以 C#/.NET 独立完成，没有复制或链接其代码、组件或素材。完整边界见[前端设计来源与独立实现声明](docs/FRONTEND_ORIGIN.md)。
 
 ## 许可证
 

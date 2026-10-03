@@ -41,6 +41,34 @@ namespace ClaudeCodeWorkbench
             return SecretStore.Unprotect((string)item["tokenEncrypted"] ?? "");
         }
 
+        public JObject FindByToken(string token)
+        {
+            token = (token ?? "").Trim();
+            if (token.Length == 0) return null;
+            var target = HashToken(token);
+            lock (_gate)
+            {
+                foreach (var item in _providers.OfType<JObject>())
+                {
+                    try
+                    {
+                        var candidate = HashToken(SecretStore.Unprotect((string)item["tokenEncrypted"] ?? ""));
+                        var difference = target.Length ^ candidate.Length;
+                        for (var index = 0; index < Math.Min(target.Length, candidate.Length); index++) difference |= target[index] ^ candidate[index];
+                        if (difference == 0) return Public(item);
+                    }
+                    catch { }
+                }
+            }
+            return null;
+        }
+
+        private static byte[] HashToken(string value)
+        {
+            using (var sha = SHA256.Create())
+                return sha.ComputeHash(Encoding.UTF8.GetBytes(value ?? ""));
+        }
+
         public JObject Upsert(JObject payload)
         {
             lock (_gate)

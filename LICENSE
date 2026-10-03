@@ -19,3 +19,8 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Project provenance notice (not an additional license condition): the desktop
+shell is an independent implementation. PI-Desktop was consulted only as a
+public design reference; none of its source code or assets are distributed in
+this Software. See docs/FRONTEND_ORIGIN.md and THIRD_PARTY_NOTICES.md.

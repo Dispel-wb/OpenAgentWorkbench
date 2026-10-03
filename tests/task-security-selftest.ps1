@@ -9,7 +9,7 @@ if ($process.ExitCode -ne 0) { throw "Task security self-test failed with exit c
     WriteDeniedInReadonly = 'OK'
     OutsideRootDenied = 'OK'
     AgentExecute = 'OK'
-    DestructiveCommandApproval = 'OK'
+    AgentDestructiveNoApproval = 'OK'
     ManualOutsideApproval = 'OK'
     ScopedToolDeny = 'OK'
 } | Format-List

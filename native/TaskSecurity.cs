@@ -25,14 +25,15 @@ namespace ClaudeCodeWorkbench
 
         public static JObject Create(string jobId, string mode, string workspace, IEnumerable<string> roots, JArray allowedTools, JArray disallowedTools)
         {
-            mode = (mode ?? "readonly").ToLowerInvariant();
+            mode = PermissionModeContract.Normalize(mode);
+            var fullAccess = PermissionModeContract.IsFullAccess(mode);
             var capabilities = new JObject();
             Set(capabilities, "read", "allow");
-            Set(capabilities, "write", mode == "edit" || mode == "agent" ? "allow" : mode == "manual" ? "ask" : "deny");
-            Set(capabilities, "delete", mode == "manual" || mode == "edit" || mode == "agent" ? "ask" : "deny");
-            Set(capabilities, "execute", mode == "agent" ? "allow" : mode == "manual" || mode == "edit" ? "ask" : "deny");
-            Set(capabilities, "network", mode == "readonly" || mode == "plan" || mode == "agent" ? "allow" : mode == "manual" || mode == "edit" ? "ask" : "deny");
-            Set(capabilities, "unknown", "ask");
+            Set(capabilities, "write", mode == "edit" || fullAccess ? "allow" : mode == "manual" ? "ask" : "deny");
+            Set(capabilities, "delete", fullAccess ? "allow" : mode == "manual" || mode == "edit" ? "ask" : "deny");
+            Set(capabilities, "execute", fullAccess ? "allow" : mode == "manual" || mode == "edit" ? "ask" : "deny");
+            Set(capabilities, "network", mode == "readonly" || mode == "plan" || fullAccess ? "allow" : mode == "manual" || mode == "edit" ? "ask" : "deny");
+            Set(capabilities, "unknown", fullAccess ? "allow" : "ask");
             if (mode == "scoped")
             {
                 foreach (var property in capabilities.Properties()) property.Value = "deny";
@@ -51,7 +52,8 @@ namespace ClaudeCodeWorkbench
             return new JObject
             {
                 ["schemaVersion"] = 1, ["jobId"] = jobId, ["mode"] = mode, ["workspace"] = Path.GetFullPath(workspace),
-                ["roots"] = new JArray(normalizedRoots.OrderBy(value => value)), ["writeRoots"] = new JArray(Path.GetFullPath(workspace)), ["capabilities"] = capabilities,
+                ["roots"] = new JArray(normalizedRoots.OrderBy(value => value)),
+                ["writeRoots"] = fullAccess ? new JArray(normalizedRoots.OrderBy(value => value)) : new JArray(Path.GetFullPath(workspace)), ["capabilities"] = capabilities,
                 ["allowedTools"] = allowedTools == null ? new JArray() : allowedTools.DeepClone(),
                 ["disallowedTools"] = disallowedTools == null ? new JArray() : disallowedTools.DeepClone(),
                 ["createdAt"] = ProviderStore.NowIso()
@@ -83,7 +85,7 @@ namespace ClaudeCodeWorkbench
             var roots = (rootToken ?? new JArray()).Select(value => (string)value).Where(value => !string.IsNullOrWhiteSpace(value)).Select(Path.GetFullPath).ToArray();
             var outside = paths.FirstOrDefault(path => !IsInside(path, roots));
             var mode = (string)policy["mode"] ?? "readonly";
-            if (outside != null && mode != "manual" && mode != "agent")
+            if (outside != null && mode != "manual" && !PermissionModeContract.IsFullAccess(mode))
             {
                 decision.Behavior = "deny"; decision.Risk = "critical";
                 decision.Reason = "Path is outside the roots authorized for this task: " + outside;
@@ -93,7 +95,7 @@ namespace ClaudeCodeWorkbench
             // Agent/manual tasks may request access beyond their declared roots, but that
             // exception must never inherit the capability's normal automatic allow rule.
             if (outside != null) configured = "ask";
-            if (decision.Capability == "delete" && configured == "allow") configured = "ask";
+            if (decision.Capability == "delete" && configured == "allow" && !PermissionModeContract.IsFullAccess(mode)) configured = "ask";
             decision.Behavior = configured == "allow" ? "allow" : configured == "ask" ? "ask" : "deny";
             decision.Reason = outside != null
                 ? "This operation targets a path outside the current task roots and requires an explicit one-time decision."
@@ -151,8 +153,16 @@ namespace ClaudeCodeWorkbench
                 var agent = TaskSecurityPolicy.Create("r2", "agent", root, new[] { root }, new JArray(), new JArray());
                 if (TaskSecurityPolicy.Evaluate(agent, "Bash", new JObject { ["command"] = "echo safe" }).Behavior != "allow") return 44;
                 var destructive = TaskSecurityPolicy.Evaluate(agent, "Bash", new JObject { ["command"] = "Remove-Item -Recurse target" });
-                if (destructive.Behavior != "ask" || destructive.Capability != "delete") return 45;
+                if (destructive.Behavior != "allow" || destructive.Capability != "delete") return 45;
                 if (TaskSecurityPolicy.Evaluate(agent, "Write", outsideInput).Behavior != "ask") return 46;
+                var allRoot = Path.GetPathRoot(outside);
+                var fullAgent = TaskSecurityPolicy.Create("r2a", "agent", root, new[] { allRoot }, new JArray(), new JArray());
+                if (TaskSecurityPolicy.Evaluate(fullAgent, "Write", outsideInput).Behavior != "allow") return 52;
+                var legacyFull = TaskSecurityPolicy.Create("r2b", "full", root, new[] { allRoot }, new JArray(), new JArray());
+                if (TaskSecurityPolicy.Evaluate(legacyFull, "Bash", new JObject { ["command"] = "echo safe" }).Behavior != "allow") return 53;
+                if (!PermissionModeContract.IsFullAccess("agent") || !PermissionModeContract.IsFullAccess("full")) return 54;
+                if (PermissionModeContract.CodexSandbox("agent") != "danger-full-access" || PermissionModeContract.DshPermission("agent") != "danger-full-access" || PermissionModeContract.PiUsesWorkspacePolicy("agent")) return 55;
+                if (PermissionModeContract.CodexSandbox("edit") != "workspace-write" || PermissionModeContract.CodexSandbox("readonly") != "read-only" || !PermissionModeContract.PiUsesWorkspacePolicy("edit")) return 56;
                 var manual = TaskSecurityPolicy.Create("r3", "manual", root, new string[0], new JArray(), new JArray());
                 if (TaskSecurityPolicy.Evaluate(manual, "Write", outsideInput).Behavior != "ask") return 47;
                 var scoped = TaskSecurityPolicy.Create("r4", "scoped", root, new string[0], new JArray("Read"), new JArray("Bash"));

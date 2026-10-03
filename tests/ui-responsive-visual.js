@@ -37,7 +37,7 @@ async function main() {
     await page.route('**/api/workbench/activity?*',async route=>{await new Promise(resolve=>setTimeout(resolve,900));await route.fulfill({status:200,contentType:'application/json',body:JSON.stringify({revision:Date.now(),changed:true,heartbeat:false,runs:[{id:'fixture-background-run',kind:'chat',sessionId:'fixture-unopened-session',workspace,state:'running',isActive:true,recovered:false,eventCursor:0,eventCount:12,pendingApprovals:1,startedAt:new Date(Date.now()-83000).toISOString(),elapsedMs:83000,providerId:'responsive-local',model:'deepseek-ai/DeepSeek-V4-Flash-Long-Model-Name'}],approvals:[{id:'fixture-approval',jobId:'fixture-background-run',sessionId:'fixture-unopened-session',workspace,model:'deepseek-ai/DeepSeek-V4-Flash-Long-Model-Name',toolName:'Bash',capability:'execute',risk:'high',reason:'需要一次性确认后台命令。',input:{command:'echo visual-fixture'},createdAt:new Date().toISOString()}],queue:[]})});});
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
     await page.locator('.provider-selector select').waitFor({ state: 'visible' });
-    await page.locator('.run-center-trigger em').waitFor({ state: 'attached' });
+    await page.locator('.footer-menu-trigger').waitFor({ state: 'visible' });
     await page.locator('.approval-card').waitFor({state:'visible'});
 
     const results = [];
@@ -118,7 +118,7 @@ async function main() {
     if (reducedMotion !== 'auto') throw new Error('Reduced motion does not disable smooth conversation scrolling');
     await page.emulateMedia({ reducedMotion: 'no-preference' });
     await page.setViewportSize({ width: 826, height: 720 });
-    await page.locator('.sidebar-actions button').filter({hasText:'开发工作台'}).click();
+    await page.locator('.topbar-actions button[title="显示工作面板"]').click();
     await page.locator('.tree-list button').first().waitFor({state:'visible'});
     const coldFileControls=await page.evaluate(()=>{const numbers=(selector,property)=>{const value=getComputedStyle(document.querySelector(selector))[property];return(value.match(/\d+(?:\.\d+)?/g)||[]).slice(0,3).map(Number);};return{edition:document.documentElement.dataset.edition,skin:document.documentElement.dataset.skin,selectorBackground:numbers('.provider-selector select','backgroundColor'),selectorBorder:numbers('.provider-selector select','borderTopColor'),inspectorBackground:numbers('.inspector','backgroundColor'),inspectorBorder:numbers('.inspector','borderLeftColor'),headerBackground:numbers('.inspector>header','backgroundColor'),toolbarBackground:numbers('.pane-toolbar','backgroundColor'),treeText:numbers('.tree-list button','color'),treeGlyph:numbers('.tree-list i','color'),emptyText:numbers('.pane-empty','color')};});
     const isBlue=values=>values.length===3&&values[2]>values[0]&&values[2]>values[1];
@@ -126,8 +126,8 @@ async function main() {
     await page.screenshot({path:path.join(outputDir,'ui-cold-file-controls.png')});
     await page.locator('.inspector>header nav button').filter({hasText:'运行'}).click();
     await page.locator('.run-card').waitFor({state:'visible'});
-    const runCenter=await page.evaluate(()=>{const pane=document.querySelector('.runs-pane'),card=document.querySelector('.run-card'),trigger=document.querySelector('.run-center-trigger');return{paneWidth:pane?.getBoundingClientRect().width||0,paneOverflow:pane?pane.scrollWidth-pane.clientWidth:999,cardWidth:card?.getBoundingClientRect().width||0,triggerText:trigger?.textContent?.trim()||'',cardText:card?.textContent?.trim()||''};});
-    if(runCenter.paneWidth<300||runCenter.cardWidth<260||runCenter.paneOverflow>1||!runCenter.triggerText.includes('1')||!runCenter.cardText.includes('等待授权')||!runCenter.cardText.includes('处理授权'))throw new Error('Run Center responsive layout or approval state is invalid');
+    const runCenter=await page.evaluate(()=>{const pane=document.querySelector('.runs-pane'),card=document.querySelector('.run-card'),trigger=document.querySelector('.footer-menu-trigger');return{paneWidth:pane?.getBoundingClientRect().width||0,paneOverflow:pane?pane.scrollWidth-pane.clientWidth:999,cardWidth:card?.getBoundingClientRect().width||0,triggerText:trigger?.textContent?.trim()||'',cardText:card?.textContent?.trim()||''};});
+    if(runCenter.paneWidth<300||runCenter.cardWidth<260||runCenter.paneOverflow>1||!runCenter.triggerText.includes('1 个后台任务')||!runCenter.cardText.includes('等待授权')||!runCenter.cardText.includes('处理授权'))throw new Error('Run Center responsive layout or approval state is invalid');
     await page.screenshot({ path: path.join(outputDir, 'ui-responsive-run-center.png') });
     const approvalLayout=await page.evaluate(()=>{const card=document.querySelector('.approval-card'),header=card?.querySelector('header');return{width:card?.getBoundingClientRect().width||0,overflow:card?card.scrollWidth-card.clientWidth:999,headerText:header?.textContent?.trim()||'',buttonText:header?.querySelector('button')?.textContent?.trim()||''};});
     if(approvalLayout.width<300||approvalLayout.overflow>1||!approvalLayout.headerText.includes('fixture-unopened-session'.slice(0,8))||approvalLayout.buttonText!=='打开会话')throw new Error('Approval ownership card is not usable');
@@ -148,7 +148,8 @@ async function main() {
     await page.screenshot({path:path.join(outputDir,'ui-workspace-memory-light.png')});
     await page.evaluate(() => { document.documentElement.dataset.theme = 'dark'; });
     await page.locator('.inspector-close').click({force:true});
-    await page.locator('.sidebar-actions button').filter({ hasText: '设置' }).click();
+    await page.locator('.footer-menu-trigger').click();
+    await page.locator('.footer-menu-popover button[aria-label="设置"]').click();
     await page.locator('.settings-nav button').filter({ hasText: '工作区' }).click();
     const limitInput = page.locator('.agent-runtime-limits input');
     await limitInput.waitFor({ state: 'visible' });
@@ -209,7 +210,7 @@ async function main() {
     await page.screenshot({ path: path.join(outputDir, 'ui-responsive-runtime-limits.png') });
     await page.keyboard.press('Escape');
     await page.locator('.provider-modal').waitFor({state:'detached'});
-    const settingsFocusReturned=await page.evaluate(()=>document.activeElement?.textContent?.includes('设置')===true);
+    const settingsFocusReturned=await page.evaluate(()=>document.activeElement?.classList?.contains('footer-menu-trigger')===true||document.activeElement?.getAttribute('aria-label')==='设置'||document.activeElement?.textContent?.includes('设置')===true);
     if(!settingsFocusReturned)throw new Error('Closing Settings did not return focus to its trigger');
     await page.keyboard.press('Control+K');
     await page.locator('.command-palette').waitFor({state:'visible'});
@@ -217,7 +218,7 @@ async function main() {
     if(paletteAccessibility.role!=='dialog'||paletteAccessibility.modal!=='true'||!paletteAccessibility.focusInput)throw new Error('Command palette semantics or focus are incomplete: '+JSON.stringify(paletteAccessibility));
     await page.keyboard.press('Escape');
     await page.locator('.command-palette').waitFor({state:'detached'});
-    const paletteFocusReturned=await page.evaluate(()=>document.activeElement?.textContent?.includes('设置')===true);
+    const paletteFocusReturned=await page.evaluate(()=>document.activeElement?.classList?.contains('footer-menu-trigger')===true||document.activeElement?.getAttribute('aria-label')==='设置'||document.activeElement?.textContent?.includes('设置')===true);
     if(!paletteFocusReturned)throw new Error('Closing command palette did not return focus to its trigger');
 
     const raceNow=new Date(),raceSessions=[

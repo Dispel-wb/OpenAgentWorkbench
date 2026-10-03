@@ -105,6 +105,9 @@ async function main() {
     const blocked = await run(escape, ['REAL_ESCAPE']); assert.equal(blocked.code, 0, JSON.stringify(blocked));
     assert.equal(fs.existsSync(path.join(root, 'pi-escape.txt')), false);
     assert.ok(blocked.events.some(e => e.type === 'user' && e.message.content[0].type === 'tool_result' && e.message.content[0].is_error)); count++;
+    const agent = config('real-agent', realEntry, 'agent', baseUrl);
+    const agentEscape = await run(agent, ['REAL_ESCAPE']); assert.equal(agentEscape.code, 0, JSON.stringify(agentEscape));
+    assert.equal(fs.readFileSync(path.join(root, 'pi-escape.txt'), 'utf8'), 'Pi 原生写入成功\n'); count++;
     const failed = await run(config('real-error', realEntry, 'readonly', baseUrl), ['REAL_ERROR']);
     assert.notEqual(failed.code, 0); assert.equal(results(failed)[0].is_error, true); count++;
     const anthropic = await run(config('real-anthropic', realEntry, 'readonly', baseUrl.replace('/v1', '/anthropic'), 'anthropic-messages'), ['中文 Anthropic']);

@@ -112,7 +112,12 @@ namespace ClaudeCodeWorkbench
             JObject value;
             try { value = JObject.Parse(payload); } catch { return RedactAndLimit(payload, ToolRuntimeSettings.From(manifest).MaxOutputBytes, out _); }
             var settings = ToolRuntimeSettings.From(manifest);
-            var blocks = value["message"]?["content"] as JArray ?? new JArray();
+            // Worker protocols are not fully uniform: system/status events may use
+            // `message` as a string while assistant/user events use an object. JToken's
+            // null-conditional indexer still throws when the token is a JValue, so only
+            // descend after proving the container shape.
+            var message = value["message"] as JObject;
+            var blocks = message == null ? new JArray() : message["content"] as JArray ?? new JArray();
             foreach (var block in blocks.OfType<JObject>())
             {
                 var type = (string)block["type"] ?? "";

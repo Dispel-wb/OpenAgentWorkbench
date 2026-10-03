@@ -106,7 +106,7 @@ namespace ClaudeCodeWorkbench
             Process.Exited += OnExited;
             if (!Process.Start()) throw new InvalidOperationException("Failed to start Claude Code native worker.");
             _jobObject = NativeJobObject.Attach(Process);
-            File.WriteAllText(_pidPath, Process.Id.ToString(), new UTF8Encoding(false));
+            DurableProcessIdentity.Write(_pidPath, Process);
             WriteHeartbeat("starting");
             _outputTask = Task.Run(() => PumpOutputAsync(_cancel.Token));
             _errorTask = Task.Run(() => PumpErrorAsync(_cancel.Token));
@@ -234,7 +234,7 @@ namespace ClaudeCodeWorkbench
             };
             if ((bool?)request["resume"] ?? false) { args.Add("--resume"); args.Add((string)request["sessionId"] ?? ""); }
             else { args.Add("--session-id"); args.Add((string)request["sessionId"] ?? ""); }
-            var permissionMode = ((string)request["permissionMode"] ?? "readonly").ToLowerInvariant();
+            var permissionMode = PermissionModeContract.Normalize((string)request["permissionMode"]);
             var permissionConfig = (string)request["permissionMcpConfig"] ?? "";
             var mcpConfigs = (request["mcpConfigs"] as JArray ?? new JArray()).Values<string>().Where(value => !string.IsNullOrWhiteSpace(value)).ToArray();
             if (mcpConfigs.Length == 0 && permissionConfig.Length > 0) mcpConfigs = new[] { permissionConfig };
@@ -254,7 +254,13 @@ namespace ClaudeCodeWorkbench
                 }
             }
             else if (permissionMode == "plan") { args.Add("--permission-mode"); args.Add("plan"); }
-            else if (permissionMode == "full") args.Add("--dangerously-skip-permissions");
+            else if (PermissionModeContract.IsFullAccess(permissionMode))
+            {
+                // The UI labels Agent as full-disk/no-approval. Claude Code's
+                // dontAsk mode silently denies protected operations, so it is not
+                // equivalent. Use the CLI's explicit bypass switch instead.
+                args.Add("--dangerously-skip-permissions");
+            }
             else
             {
                 args.Add("--permission-mode"); args.Add("dontAsk");
@@ -480,7 +486,8 @@ namespace ClaudeCodeWorkbench
             var eventType = (string)value["type"] ?? "";
             var subtype = (string)value["subtype"] ?? "";
             var status = (string)value["status"] ?? "";
-            var nestedType = (string)value["event"]?["type"] ?? "";
+            var nestedEvent = value["event"] as JObject;
+            var nestedType = (string)(nestedEvent == null ? null : nestedEvent["type"]) ?? "";
             var signals = new[] { eventType, subtype, status, nestedType };
             if (!signals.Any(signal => signal.IndexOf("compact", StringComparison.OrdinalIgnoreCase) >= 0)) return;
 
@@ -814,6 +821,14 @@ namespace ClaudeCodeWorkbench
                     ["model"] = "offline-model", ["effort"] = "low", ["permissionMode"] = "readonly",
                     ["allowedTools"] = new JArray(), ["disallowedTools"] = new JArray(), ["addDirs"] = new JArray()
                 };
+                var agentRequest = (JObject)request.DeepClone(); agentRequest["permissionMode"] = "agent";
+                var agentArguments = NativeWorkerHandle.BuildClaudeArguments(agentRequest);
+                if (!agentArguments.Contains("--dangerously-skip-permissions") || agentArguments.Contains("dontAsk")) return 26;
+                var fullRequest = (JObject)request.DeepClone(); fullRequest["permissionMode"] = "full";
+                if (!NativeWorkerHandle.BuildClaudeArguments(fullRequest).Contains("--dangerously-skip-permissions")) return 27;
+                var readonlyArguments = NativeWorkerHandle.BuildClaudeArguments(request);
+                var readonlyMode = readonlyArguments.IndexOf("--permission-mode");
+                if (readonlyMode < 0 || readonlyMode + 1 >= readonlyArguments.Count || readonlyArguments[readonlyMode + 1] != "dontAsk" || !readonlyArguments.Contains("Read,Glob,Grep,WebSearch,WebFetch,Skill")) return 28;
                 using (var worker = NativeWorkerHandle.Start(request, output, error, status, pid, input))
                 {
                     if (!worker.Process.StartInfo.Arguments.Contains("--max-turns 100")) return 25;

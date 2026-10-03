@@ -93,6 +93,13 @@ internal static class FakeClaudeWorker
                     }.ToString(Newtonsoft.Json.Formatting.None));
                     continue;
                 }
+                if (text.Contains("scalar-message-event"))
+                {
+                    output.WriteLine(new JObject
+                    {
+                        ["type"] = "system", ["subtype"] = "status", ["message"] = "worker message may be a scalar"
+                    }.ToString(Newtonsoft.Json.Formatting.None));
+                }
                 if (text.Contains("provider-auth-failure"))
                 {
                     output.WriteLine(new JObject

@@ -22,7 +22,7 @@ async function main() {
     const page = await context.newPage();
     const openHealth = async () => {
       await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-      await page.locator('.sidebar-actions button').filter({ hasText: '开发工作台' }).click();
+      await page.locator('.topbar-actions button[title="显示工作面板"]').click();
       await page.locator('.inspector header nav button').filter({ hasText: '诊断' }).click();
       await page.locator('.metrics-overview').waitFor({ state: 'visible' });
     };

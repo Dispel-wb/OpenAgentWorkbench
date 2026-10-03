@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "release": "1.0.0",
+  "state": "passed",
+  "candidateEdition": "local",
+  "candidateSha256": "8BD2D698CA550070FE4BFCD8ED8CDE522F1FDED527065C9FDF0F617EBF52F301",
+  "startedAt": "2026-09-30T15:35:06.7863560+08:00",
+  "completedAt": "2026-10-03T15:35:18.3839417+08:00",
+  "requestedHours": 72,
+  "activeDurationSeconds": 259211,
+  "cycles": 831,
+  "parallelKernels": ["claude", "codex", "dsh", "pi"],
+  "passes": {"claude": 831, "codex": 831, "dsh": 831, "pi": 831},
+  "failures": {"claude": 0, "codex": 0, "dsh": 0, "pi": 0},
+  "totalFailures": 0,
+  "suspendGaps": 0,
+  "frozenInputsValidated": true,
+  "paidApiCalls": 0,
+  "scope": "Four genuine CLI cores with local deterministic model fixtures; not third-party cloud-provider certification."
+}

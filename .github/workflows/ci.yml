@@ -64,6 +64,12 @@ jobs:
           .\tests\native-diagnostics-selftest.ps1 -Executable $exe
           node .\tests\ui-contract-selftest.js
           if ($LASTEXITCODE -ne 0) { throw 'UI contract failed' }
+          node .\tests\native-shell-presentation-selftest.js
+          if ($LASTEXITCODE -ne 0) { throw 'Native shell presentation contract failed' }
+          node .\tests\workspace-layout-selftest.js
+          if ($LASTEXITCODE -ne 0) { throw 'Workspace layout contract failed' }
+          node .\tests\image-task-ui-selftest.js
+          if ($LASTEXITCODE -ne 0) { throw 'Image task UI contract failed' }
           node .\tests\ui-connection-state-selftest.js
           if ($LASTEXITCODE -ne 0) { throw 'UI connection state failed' }
           node .\tests\bootstrap-workspace-selftest.js

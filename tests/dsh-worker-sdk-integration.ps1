@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$Executable, [string]$NodePath='', [ValidateSet('none','oversize','flood','byte-flood','malformed','eof')][string]$Fault='none')
+param([Parameter(Mandatory=$true)][string]$Executable, [string]$NodePath='', [ValidateSet('none','oversize','flood','byte-flood','malformed','eof')][string]$Fault='none', [ValidateSet('readonly','agent')][string]$PermissionMode='readonly')
 $ErrorActionPreference='Stop'
 if(-not $NodePath){$NodePath=(Get-Command node).Source}
 $root=Join-Path ([IO.Path]::GetTempPath()) ('dsh-sdk-中文 路径-'+[guid]::NewGuid().ToString('N'))
@@ -6,7 +6,7 @@ $root=Join-Path ([IO.Path]::GetTempPath()) ('dsh-sdk-中文 路径-'+[guid]::New
 $process=$null
 try {
     $config=Join-Path $root 'bridge.json'
-    $payload=@{harness='dsh';executable=$NodePath;entry=(Join-Path $PSScriptRoot 'fake-dsh-worker.js');profile='sdk';home=$root;workspace=$root;model='fixture-model';permissionMode='readonly';sessionId='fixture-session';maxTurns=10}
+    $payload=@{harness='dsh';executable=$NodePath;entry=(Join-Path $PSScriptRoot 'fake-dsh-worker.js');profile='sdk';home=$root;workspace=$root;model=$(if($PermissionMode-eq'agent'){'fixture-agent'}else{'fixture-model'});permissionMode=$PermissionMode;sessionId='fixture-session';maxTurns=10}
     if($Fault -ne 'none'){$payload.model='fixture-'+$Fault}
     [IO.File]::WriteAllText($config,($payload|ConvertTo-Json),[Text.UTF8Encoding]::new($false))
     $start=[Diagnostics.ProcessStartInfo]::new()
@@ -35,7 +35,7 @@ try {
     if($results.Count -ne 2 -or @($results|Where-Object is_error).Count){throw 'Expected two successful DSHarness turns'}
     if(@($results|Where-Object{$_.result -ne 'DSHarness 中文回复' -or $_.usage.input_tokens -ne 3 -or $_.usage.output_tokens -ne 4}).Count){throw 'Reply or Token mapping failed'}
     if(@($events|Where-Object{$_.type -eq 'user' -and $_.message.content[0].type -eq 'tool_result'}).Count -ne 2){throw 'Tool results were not mapped'}
-    [pscustomobject]@{DshWorkerSdk='PASS';Turns=2;Utf8=$true;ToolEvents=$true;TokenUsage=$true;PreAckEvents=$true;ReadOnlyEnvironment=$true}|Format-List
+    [pscustomobject]@{DshWorkerSdk='PASS';Turns=2;Utf8=$true;ToolEvents=$true;TokenUsage=$true;PreAckEvents=$true;PermissionMode=$PermissionMode;MappedEnvironment=$(if($PermissionMode-eq'agent'){'danger-full-access'}else{'read-only'})}|Format-List
 } finally {
     if($process -and -not $process.HasExited){$process.Kill();$process.WaitForExit(3000)|Out-Null}
     $resolved=[IO.Path]::GetFullPath($root);$temp=[IO.Path]::GetFullPath([IO.Path]::GetTempPath())

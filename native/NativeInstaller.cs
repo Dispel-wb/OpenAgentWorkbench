@@ -91,6 +91,13 @@ namespace ClaudeCodeWorkbench
             if (!Directory.Exists(full) || !File.Exists(manifestPath)) throw new InvalidOperationException("目标不是当前工作台版本的安装目录");
             var manifest = JsonUtil.Read(manifestPath, new JObject()) as JObject ?? new JObject();
             if ((string)manifest["productId"] != ProductId) throw new InvalidOperationException("安装清单产品标识不匹配");
+            var executableValue = ((string)manifest["executable"] ?? "").Trim();
+            if (executableValue.Length == 0) throw new InvalidOperationException("安装清单缺少程序路径");
+            var executable = Path.GetFullPath(executableValue);
+            var executableDirectory = Path.GetFullPath(Path.GetDirectoryName(executable) ?? "");
+            if (!string.Equals(executableDirectory.TrimEnd(Path.DirectorySeparatorChar), full.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase) ||
+                !string.Equals(Path.GetFileName(executable), ExeName, StringComparison.OrdinalIgnoreCase) || !File.Exists(executable))
+                throw new InvalidOperationException("安装清单与目标目录中的程序不匹配");
         }
 
         private static void WriteStartMenuShortcut(string executable)

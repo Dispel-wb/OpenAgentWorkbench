@@ -70,7 +70,7 @@ async function main(){
     assert.equal(externalImageRequests,0,'External OOXML images must never be requested');
     await page.screenshot({path:path.join(out,'embedded-image-preview.png')});
     await page.getByRole('button',{name:'关闭文档预览'}).click();
-    await page.getByRole('button',{name:'开发工作台'}).click();
+    await page.locator('.topbar-actions button[title="显示工作面板"]').click();
     await page.locator('.inspector header').getByRole('button',{name:'运行',exact:true}).click();
     await page.getByRole('button',{name:'DAG 编排'}).click();
     await page.getByRole('dialog',{name:'多 Agent 工作流'}).waitFor();

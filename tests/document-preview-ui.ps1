@@ -3,9 +3,10 @@ param(
     [Parameter(Mandatory = $true)][string]$Node,
     [Parameter(Mandatory = $true)][string]$NodeModules,
     [string]$BrowserExecutable = 'C:\Program Files\Google\Chrome\Application\chrome.exe',
-    [string]$OutputDir = $PSScriptRoot
+    [string]$OutputDir = ''
 )
 $ErrorActionPreference = 'Stop'
+$OutputDir = if ($OutputDir) { $OutputDir } else { $PSScriptRoot }
 $root = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) ('claude-long-session-' + [guid]::NewGuid().ToString('N'))))
 [IO.Directory]::CreateDirectory($root) | Out-Null
 $runtimePath = Join-Path $root '.claude-gui-v2\runtime-state.json'

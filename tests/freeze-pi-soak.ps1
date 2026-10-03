@@ -1,10 +1,11 @@
 param(
     [Parameter(Mandatory=$true)][string]$Executable,
     [Parameter(Mandatory=$true)][string]$Destination,
-    [string]$PiRuntimeRoot=(Join-Path $PSScriptRoot '..\runtimes\pi'),
+    [string]$PiRuntimeRoot='',
     [string]$NodePath=(Get-Command node -ErrorAction Stop).Source
 )
 $ErrorActionPreference='Stop'
+$PiRuntimeRoot=if($PiRuntimeRoot){$PiRuntimeRoot}else{Join-Path $PSScriptRoot '..\runtimes\pi'}
 $Executable=(Resolve-Path -LiteralPath $Executable).Path
 $PiRuntimeRoot=(Resolve-Path -LiteralPath $PiRuntimeRoot).Path
 $NodePath=(Resolve-Path -LiteralPath $NodePath).Path

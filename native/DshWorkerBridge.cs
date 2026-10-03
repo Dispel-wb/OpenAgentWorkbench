@@ -79,8 +79,8 @@ namespace ClaudeCodeWorkbench
                 start.EnvironmentVariables["DSH_TELEMETRY_DISABLED"] = "1";
                 start.EnvironmentVariables["DSH_TELEMETRY_MODE"] = "DISABLED";
                 start.EnvironmentVariables["DSH_MAX_TOKENS_AS_SUCCESS"] = "false";
-                var mode = (string)config["permissionMode"] ?? "readonly";
-                start.EnvironmentVariables["DSH_PERMISSION_MODE"] = mode == "full" ? "danger-full-access" : mode == "readonly" || mode == "plan" ? "read-only" : "workspace-write";
+                var mode = PermissionModeContract.Normalize((string)config["permissionMode"]);
+                start.EnvironmentVariables["DSH_PERMISSION_MODE"] = PermissionModeContract.DshPermission(mode);
                 _process = Process.Start(start);
                 _job = NativeJobObject.Attach(_process);
                 _writer = new StreamWriter(_process.StandardInput.BaseStream, Utf8, 4096, true) { AutoFlush = true };

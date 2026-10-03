@@ -1,5 +1,6 @@
-param([string]$DependencyRoot=(Join-Path $PSScriptRoot '..\.packages'))
+param([string]$DependencyRoot='')
 $ErrorActionPreference='Stop'
+$DependencyRoot=if($DependencyRoot){$DependencyRoot}else{Join-Path $PSScriptRoot '..\.packages'}
 $sourceRoot=Split-Path $PSScriptRoot -Parent
 $compiler=Join-Path $DependencyRoot 'microsoft.net.compilers.toolset\4.14.0\tasks\net472\csc.exe'
 $scratch=Join-Path ([IO.Path]::GetTempPath()) ('sdk-frame-test-'+[guid]::NewGuid().ToString('N'))

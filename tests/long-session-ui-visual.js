@@ -120,7 +120,7 @@ async function main() {
       const range=document.createRange();range.setStart(text,0);range.setEnd(text,5);getSelection().removeAllRanges();getSelection().addRange(range);
     });
     await page.keyboard.press('Shift+F10');
-    await page.getByRole('menu',{name:'所选内容操作'}).waitFor();
+    await page.getByRole('menu',{name:'消息操作'}).waitFor();
     const selected=await page.evaluate(()=>getSelection().toString());
     await page.keyboard.press('ArrowRight');
     if(await page.evaluate(()=>document.activeElement.textContent)!=='引用')throw new Error('Keyboard selection menu focus failed');

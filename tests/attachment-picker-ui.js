@@ -21,7 +21,7 @@ async function main() {
     const page = await context.newPage();
     await page.route('**/api/files/select', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ files: [fixture] }) }));
     await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-    const picker = page.locator('.composer-hints > button').first();
+    const picker = page.locator('.attach-control');
     await picker.waitFor({ state: 'visible' });
     if (await picker.isDisabled()) throw new Error('Claude attachment picker is disabled without an imported Provider');
     if (!(await picker.getAttribute('title') || '').includes('添加文件')) throw new Error('Claude attachment picker title is misleading');
@@ -31,7 +31,7 @@ async function main() {
     if (!(await saveSettings('pi')).ok()) throw new Error('Unable to seed Pi attachment state');
     const piPage = await context.newPage();
     await piPage.goto(baseUrl, { waitUntil: 'domcontentloaded' });
-    const piPicker = piPage.locator('.composer-hints > button').first();
+    const piPicker = piPage.locator('.attach-control');
     await piPicker.waitFor({ state: 'visible' });
     if (!(await piPicker.isDisabled())) throw new Error('Pi attachment picker must remain disabled');
     if (!(await piPicker.getAttribute('title') || '').includes('Pi')) throw new Error('Pi attachment limitation is not explained');

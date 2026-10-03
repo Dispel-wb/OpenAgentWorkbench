@@ -195,7 +195,7 @@ namespace ClaudeCodeWorkbench
                     return;
                 }
                 if (await _permissions.HandleAsync(context, path, method)) return;
-                if (method == "GET" && path == "/") { await ServeResource(context.Response, "static.index.html", "text/html; charset=utf-8", false); return; }
+                if (method == "GET" && path == "/") { await ServeIndex(context.Response); return; }
                 if (method == "GET" && path.StartsWith("/static/", StringComparison.Ordinal))
                 {
                     await ServeStatic(context.Response, path.Substring(8)); return;
@@ -205,6 +205,11 @@ namespace ClaudeCodeWorkbench
                 if (method == "POST" && path == "/api/settings") { JsonUtil.WriteAtomic(AppPaths.SettingsFile, await ReadBody(context.Request)); await Ok(context.Response); return; }
                 if (method == "GET" && path == "/api/providers") { await WriteJsonAsync(context.Response, _providers.AllPublic()); return; }
                 if (method == "POST" && path == "/api/providers") { await SaveProvider(context); return; }
+                if (method == "POST" && path == "/api/providers/check-token")
+                {
+                    var body = JsonUtil.ObjectOrEmpty(await ReadBody(context.Request));
+                    await WriteJsonAsync(context.Response, new JObject { ["provider"] = _providers.FindByToken((string)body["token"]) }); return;
+                }
                 if (method == "GET" && path == "/api/providers/health") { await WriteJsonAsync(context.Response, _eventStore.ListProviderHealth(HttpQuery.Get(context.Request, "providerId") ?? "")); return; }
                 if (method == "POST" && path.StartsWith("/api/providers/health/reset/", StringComparison.Ordinal))
                 {
@@ -348,13 +353,17 @@ namespace ClaudeCodeWorkbench
             if (!EditionInfo.IsOpenSource)
             {
                 settings["workspace"] = AppPaths.Workspace;
-                foreach (var session in sessions.OfType<JObject>()) session["workspace"] = AppPaths.Workspace;
+                foreach (var session in sessions.OfType<JObject>())
+                {
+                    session["workspace"] = WorkspaceLayout.NormalizeSessionWorkspace((string)session["workspace"]);
+                    if (string.IsNullOrWhiteSpace((string)session["workspaceRoot"])) session["workspaceRoot"] = AppPaths.Workspace;
+                }
             }
             await WriteJsonAsync(response, new JObject
             {
                 ["providers"] = _providers.AllPublic(), ["sessions"] = sessions,
                 ["settings"] = settings, ["workspace"] = AppPaths.Workspace,
-                ["version"] = Program.AppContractVersion, ["edition"] = new JObject { ["id"] = EditionInfo.Id, ["productName"] = EditionInfo.ProductName, ["openSource"] = EditionInfo.IsOpenSource }, ["backend"] = "C#/.NET native host", ["trayMode"] = true, ["maxConcurrentWorkers"] = MaxConcurrentWorkers,
+                ["version"] = Program.AppContractVersion, ["edition"] = new JObject { ["id"] = EditionInfo.Id, ["productName"] = EditionInfo.ProductName, ["openSource"] = EditionInfo.IsOpenSource }, ["backend"] = "C#/.NET native host", ["presentation"] = ShellPresentation.Snapshot(), ["workspaceLayout"] = WorkspaceLayout.Snapshot(), ["trayMode"] = true, ["maxConcurrentWorkers"] = MaxConcurrentWorkers,
                 ["persistence"] = _eventStore.Health(), ["providerHealth"] = _eventStore.ListProviderHealth(),
                 ["activeJobs"] = RunCenter()
             });
@@ -579,8 +588,7 @@ namespace ClaudeCodeWorkbench
                     job.Workspace = (string)request["workspace"] ?? AppPaths.Workspace;
                     job.Model = (string)request["model"] ?? "";
                     job.Persistent = true;
-                    int childPid;
-                    var childAlive = File.Exists(job.PidPath) && int.TryParse(File.ReadAllText(job.PidPath).Trim(), out childPid) && ProcessAlive(childPid);
+                    var childAlive = JobProcessAlive(job);
                     if ((state == JobStates.Completed || state == JobStates.Failed || state == JobStates.Cancelled) && !childAlive)
                     {
                         // Older builds could persist the terminal status.json first and exit before
@@ -640,12 +648,6 @@ namespace ClaudeCodeWorkbench
             }
         }
 
-        private static bool ProcessAlive(int pid)
-        {
-            try { using (var process = Process.GetProcessById(pid)) return !process.HasExited; }
-            catch { return false; }
-        }
-
         private static bool IsActiveJobState(string state)
         {
             return state == JobStates.Starting || state == JobStates.Running || state == JobStates.Waiting || state == JobStates.Paused;
@@ -661,21 +663,21 @@ namespace ClaudeCodeWorkbench
                 return;
             }
 
-            var info = new FileInfo(file);
-            if (info.Length > 24L * 1024 * 1024)
-            {
-                await WriteJsonAsync(context.Response, new JObject { ["error"] = "文件超过 24 MB，无法生成预览" }, 413);
-                return;
-            }
-
             var contentType = Path.GetExtension(file).Equals(".pdf", StringComparison.OrdinalIgnoreCase) ? "application/pdf" : PreviewMimeType(file);
             if (contentType == null)
             {
-                await WriteJsonAsync(context.Response, new JObject { ["error"] = "该文件类型不支持缩略图" }, 415);
+                await WriteJsonAsync(context.Response, new JObject { ["error"] = "该文件类型不支持预览" }, 415);
                 return;
             }
-
+            var info = new FileInfo(file);
+            var maxBytes = contentType.StartsWith("text/", StringComparison.OrdinalIgnoreCase) || contentType.IndexOf("json", StringComparison.OrdinalIgnoreCase) >= 0 || contentType.IndexOf("javascript", StringComparison.OrdinalIgnoreCase) >= 0 ? 4L * 1024 * 1024 : 24L * 1024 * 1024;
+            if (info.Length > maxBytes)
+            {
+                await WriteJsonAsync(context.Response, new JObject { ["error"] = "文件过大，无法生成预览" }, 413);
+                return;
+            }
             context.Response.Headers["Cache-Control"] = "no-store";
+            context.Response.Headers["X-Content-Type-Options"] = "nosniff";
             await WriteBytesAsync(context.Response, File.ReadAllBytes(file), contentType);
         }
 
@@ -708,6 +710,7 @@ namespace ClaudeCodeWorkbench
                 await WriteJsonAsync(context.Response, new JObject { ["error"] = "该会话仍有任务运行，无法永久删除", ["code"] = "session_has_background_work" }, 409);
                 return;
             }
+            if (_eventStore.ReconcileTerminalQueue(id) > 0) TouchActivity();
             var queued = _eventStore.ListQueue(id, false).Count;
             var scheduled = _eventStore.ListSchedules(true).OfType<JObject>().Count(item =>
                 string.Equals((string)item["sessionId"], id, StringComparison.Ordinal) &&
@@ -1416,7 +1419,7 @@ namespace ClaudeCodeWorkbench
                 {
                     ["providerId"] = provider["id"], ["model"] = model, ["protocol"] = provider["text"]?["protocol"], ["countedInPrompt"] = false
                 });
-                if (prepared.SkillHint.Length > 0) _eventStore.RecordContext(reusableJob.Id, sessionId, "skill-metadata", "按需命中的 Skill", prepared.SkillHint, new JObject { ["fullBodyPreloaded"] = false });
+                if (prepared.SkillHint.Length > 0) _eventStore.RecordContext(reusableJob.Id, sessionId, "skill-adapter", "按需命中的 Skill", prepared.SkillHint, new JObject { ["boundedBodyIncluded"] = true });
                 RecordWorkspaceMemoryContext(reusableJob.Id, sessionId, prepared);
                 foreach (var attachment in attachments)
                 {
@@ -1522,7 +1525,7 @@ namespace ClaudeCodeWorkbench
                 ["countedInPrompt"] = true
             });
             var routingHint = prepared.SkillHint;
-            if (routingHint.Length > 0) _eventStore.RecordContext(id, sessionId, "skill-metadata", "按需命中的 Skill", routingHint, new JObject { ["fullBodyPreloaded"] = false });
+            if (routingHint.Length > 0) _eventStore.RecordContext(id, sessionId, "skill-adapter", "按需命中的 Skill", routingHint, new JObject { ["boundedBodyIncluded"] = true });
             RecordWorkspaceMemoryContext(id, sessionId, prepared);
             foreach (var attachment in attachments)
             {
@@ -1669,7 +1672,8 @@ namespace ClaudeCodeWorkbench
                 foreach (var token in _eventStore.ClaimDueSchedules(owner, now, 20).OfType<JObject>())
                 {
                     var scheduleId = (string)token["id"] ?? "";
-                    var sessionId = ((string)token["sessionId"] ?? "").Trim();
+                    var newConversation = string.Equals((string)token["sessionMode"], "new", StringComparison.OrdinalIgnoreCase);
+                    var sessionId = newConversation ? Guid.NewGuid().ToString() : ((string)token["sessionId"] ?? "").Trim();
                     var active = _jobs.Values.Any(job => job.IsActive && job.Kind == "chat" && string.Equals(job.SessionId, sessionId, StringComparison.Ordinal));
                     var conflict = ((string)token["conflictPolicy"] ?? "queue").ToLowerInvariant();
                     if (active)
@@ -1714,8 +1718,16 @@ namespace ClaudeCodeWorkbench
                                 _eventStore.BindScheduleRun(scheduleId, runId, owner, now);
                             }
                         }
-                        if (session != null) { session["started"] = true; session["updatedAt"] = ProviderStore.NowIso(); JsonUtil.WriteAtomic(AppPaths.SessionsFile, session.Parent); }
-                        if (_window != null) _window.ShowNotification("Claude Code 后台调度", "定时任务已启动，后端会等待 Agent 的真实终态");
+                        if (newConversation)
+                        {
+                            var sessions = JsonUtil.Read(AppPaths.SessionsFile, new JArray()) as JArray ?? new JArray();
+                            sessions.Add(new JObject { ["id"] = sessionId, ["claudeSessionId"] = sessionId,
+                                ["title"] = (string)token["title"] ?? "定时任务", ["kind"] = "chat", ["createdAt"] = ProviderStore.NowIso(),
+                                ["updatedAt"] = ProviderStore.NowIso(), ["workspace"] = workspace, ["started"] = true, ["allowedDirs"] = new JArray(), ["queue"] = new JArray() });
+                            JsonUtil.WriteAtomic(AppPaths.SessionsFile, sessions);
+                        }
+                        else if (session != null) { session["started"] = true; session["updatedAt"] = ProviderStore.NowIso(); JsonUtil.WriteAtomic(AppPaths.SessionsFile, session.Parent); }
+                        // Completion and failure are reported after the real run reaches a terminal state.
                     }
                     catch (Exception error) { _eventStore.CompleteSchedule(scheduleId, false, error.Message, now); CrashLog.Handled("SchedulerRun", error); }
                 }
@@ -1741,7 +1753,8 @@ namespace ClaudeCodeWorkbench
                     var details = snapshot?["details"] as JObject ?? new JObject();
                     var error = (string)details["error"] ?? (string)details["message"] ?? (state == JobStates.Completed ? "" : "Agent Run " + state);
                     _eventStore.CompleteSchedule(scheduleId, state == JobStates.Completed, error, now);
-                    if (_window != null) _window.ShowNotification(state == JobStates.Completed ? "Claude Code 后台调度完成" : "Claude Code 后台调度失败", state == JobStates.Completed ? "定时任务已完成" : Limit(error, 220));
+                    if (_window != null && (state != JobStates.Completed || !string.Equals((string)schedule["notification"], "failed", StringComparison.OrdinalIgnoreCase)))
+                        _window.ShowNotification(state == JobStates.Completed ? "Claude Code 后台调度完成" : "Claude Code 后台调度失败", state == JobStates.Completed ? "定时任务已完成" : Limit(error, 220));
                 }
                 else _eventStore.RenewScheduleLease(scheduleId, owner, now);
             }
@@ -1778,9 +1791,52 @@ namespace ClaudeCodeWorkbench
         private async Task PrioritizeTaskQueue(HttpListenerContext context, string id)
         {
             var body = JsonUtil.ObjectOrEmpty(await ReadBody(context.Request));
-            var ok = _eventStore.PrioritizeQueue(SafeId(id), (bool?)body["steer"] ?? true);
-            if (ok) TouchActivity();
-            await WriteJsonAsync(context.Response, new JObject { ["ok"] = ok });
+            var queueId = SafeId(id); var steer = (bool?)body["steer"] ?? true;
+            var ok = _eventStore.PrioritizeQueue(queueId, steer);
+            if (!ok)
+            {
+                await WriteJsonAsync(context.Response, new JObject { ["ok"] = false, ["error"] = "队列消息已经发送、取消或不存在" }, 409); return;
+            }
+
+            var item = _eventStore.QueueById(queueId);
+            if (steer && item != null)
+            {
+                var taskId = (string)item["taskId"] ?? "";
+                var active = _jobs.Values.FirstOrDefault(job => job.Kind == "chat" && job.IsActive &&
+                    string.Equals(job.SessionId, taskId, StringComparison.Ordinal));
+                if (active != null && SupportsLiveSteering(active) && _eventStore.TransitionQueue(queueId, "queued", "starting", active.Id))
+                {
+                    try
+                    {
+                        var inputOffset = AppendChatInput(active, "方向调整：下面是当前最高优先级的新要求。请立即据此调整后续工作方向；已经完成且仍适用的结果可以保留。\n\n" + (string)item["text"]);
+                        _eventStore.TransitionQueueAny(queueId, "running", active.Id, inputOffset);
+                        TouchActivity();
+                        await WriteJsonAsync(context.Response, new JObject
+                        {
+                            ["ok"] = true, ["live"] = true, ["queued"] = false, ["runId"] = active.Id,
+                            ["inputOffset"] = inputOffset, ["item"] = _eventStore.QueueById(queueId)
+                        });
+                    }
+                    catch
+                    {
+                        _eventStore.TransitionQueueAny(queueId, "queued");
+                        throw;
+                    }
+                    return;
+                }
+                if (active != null && !SupportsLiveSteering(active))
+                {
+                    TouchActivity();
+                    await WriteJsonAsync(context.Response, new JObject
+                    {
+                        ["ok"] = true, ["live"] = false, ["queued"] = true,
+                        ["reason"] = "worker_steering_unsupported", ["item"] = _eventStore.QueueById(queueId)
+                    });
+                    return;
+                }
+            }
+            TouchActivity();
+            await WriteJsonAsync(context.Response, new JObject { ["ok"] = true, ["live"] = false, ["queued"] = true, ["item"] = _eventStore.QueueById(queueId) });
         }
 
         private async Task CheckTaskQueueAsync()
@@ -1791,6 +1847,7 @@ namespace ClaudeCodeWorkbench
             {
                 InjectBackgroundLoopFailure("queue", ref TestQueueLoopFailureInjected);
                 await CheckWorkflowsAsync();
+                changed |= _eventStore.ReconcileTerminalQueue() > 0;
                 foreach (var token in _eventStore.QueueInProgress().OfType<JObject>())
                 {
                     var runId = (string)token["runId"] ?? ""; Job running;
@@ -1877,12 +1934,31 @@ namespace ClaudeCodeWorkbench
 
         private static bool JobProcessAlive(Job job)
         {
-            try
+            Process process;
+            if (!TryOpenJobProcess(job, out process)) return false;
+            using (process) return !process.HasExited;
+        }
+
+        private static bool TryOpenJobProcess(Job job, out Process process)
+        {
+            process = null;
+            return job != null && DurableProcessIdentity.TryOpen(job.PidPath, out process);
+        }
+
+        private static void KillVerifiedJobProcess(Job job)
+        {
+            Process process;
+            if (!TryOpenJobProcess(job, out process)) return;
+            using (process)
             {
-                int pid;
-                return File.Exists(job.PidPath) && int.TryParse(File.ReadAllText(job.PidPath).Trim(), out pid) && ProcessAlive(pid);
+                try
+                {
+                    if (process.HasExited) return;
+                    process.Kill();
+                    process.WaitForExit(8000);
+                }
+                catch (InvalidOperationException) { }
             }
-            catch { return false; }
         }
 
         private static bool SupportsLiveSteering(Job job)
@@ -1910,13 +1986,7 @@ namespace ClaudeCodeWorkbench
             try
             {
                 if (job.Worker != null) job.Worker.Retire(job.State);
-                else
-                {
-                    int pid;
-                    if (File.Exists(job.PidPath) && int.TryParse(File.ReadAllText(job.PidPath).Trim(), out pid) && ProcessAlive(pid))
-                        using (var killer = Process.Start(new ProcessStartInfo("taskkill.exe", "/PID " + pid + " /T /F") { UseShellExecute = false, CreateNoWindow = true }))
-                            if (killer != null) killer.WaitForExit(8000);
-                }
+                else KillVerifiedJobProcess(job);
             }
             catch (Exception error) { CrashLog.Handled("IdleWorkerRetire:" + job.Id, error); }
             ReleaseJobResources(job);
@@ -2510,16 +2580,13 @@ namespace ClaudeCodeWorkbench
             if (!Directory.Exists(root)) return 0;
             var fileName = parsedSessionId.ToString() + ".jsonl";
             var deleted = 0;
-            string[] candidates;
-            try { candidates = Directory.GetFiles(root, fileName, SearchOption.AllDirectories); }
-            catch { return 0; }
-            foreach (var candidate in candidates)
+            foreach (var candidate in EnumerateFilesWithoutLinks(root, fileName))
             {
                 try
                 {
                     var full = Path.GetFullPath(candidate);
-                    var relative = full.Substring(Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar).Length).TrimStart(Path.DirectorySeparatorChar);
-                    if (relative.StartsWith("..", StringComparison.Ordinal) || !string.Equals(Path.GetFileName(full), fileName, StringComparison.OrdinalIgnoreCase)) continue;
+                    var rootPrefix = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                    if (!full.StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase) || !string.Equals(Path.GetFileName(full), fileName, StringComparison.OrdinalIgnoreCase)) continue;
                     File.Delete(full);
                     var descriptor = full + ".workbench.json";
                     if (File.Exists(descriptor)) File.Delete(descriptor);
@@ -2528,6 +2595,32 @@ namespace ClaudeCodeWorkbench
                 catch (Exception error) { CrashLog.Handled("DeleteTranscript", error); }
             }
             return deleted;
+        }
+
+        private static IEnumerable<string> EnumerateFilesWithoutLinks(string root, string fileName)
+        {
+            var pending = new Stack<string>();
+            pending.Push(Path.GetFullPath(root));
+            while (pending.Count > 0)
+            {
+                var directory = pending.Pop();
+                string[] files;
+                try { files = Directory.GetFiles(directory, fileName, SearchOption.TopDirectoryOnly); }
+                catch { files = new string[0]; }
+                foreach (var file in files) yield return file;
+
+                string[] children;
+                try { children = Directory.GetDirectories(directory, "*", SearchOption.TopDirectoryOnly); }
+                catch { children = new string[0]; }
+                foreach (var child in children)
+                {
+                    try
+                    {
+                        if ((File.GetAttributes(child) & FileAttributes.ReparsePoint) == 0) pending.Push(child);
+                    }
+                    catch { }
+                }
+            }
         }
 
         private static string[] AgentRoots()
@@ -2553,13 +2646,15 @@ namespace ClaudeCodeWorkbench
                 request["mcpConfigs"] = new JArray();
                 request.Remove("claudeCodeIsolation");
                 request["coreIsolation"] = new JObject { ["core"] = core, ["permissionMode"] = request["permissionMode"], ["enforcedBy"] = "selected-cli", ["workbenchMcpApplied"] = false, ["workbenchAgentDefinitionsApplied"] = false };
-                if (core == "pi") request["coreIsolation"]["enforcedBy"] = (string)request["permissionMode"] == "full" ? "pi-full-access-no-sandbox" : "pi-workspace-policy-extension";
+                if (core == "pi") request["coreIsolation"]["enforcedBy"] = PermissionModeContract.IsFullAccess((string)request["permissionMode"]) ? "pi-full-access-no-sandbox" : "pi-workspace-policy-extension";
                 return;
             }
             var mode = ((string)request["permissionMode"] ?? "readonly").ToLowerInvariant();
             var permissionConfig = Path.Combine(runDir, "permissions.mcp.json");
             var servers = new JObject();
-            var permissionBrokerEnabled = new[] { "manual", "scoped", "edit", "agent" }.Contains(mode);
+            // Agent mode is the explicit full-workspace mode. Keep the broker for
+            // interactive/manual modes, but do not downgrade Agent into approval mode.
+            var permissionBrokerEnabled = new[] { "manual", "scoped", "edit" }.Contains(mode);
             if (permissionBrokerEnabled) servers["gui_permissions"] = new JObject
             {
                 ["command"] = Assembly.GetExecutingAssembly().Location,
@@ -3174,6 +3269,35 @@ namespace ClaudeCodeWorkbench
             await ServeResource(response, resource, MimeType(clean), false);
         }
 
+        private async Task ServeIndex(HttpListenerResponse response)
+        {
+            using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("static.index.html"))
+            {
+                if (stream == null) { await NotFound(response); return; }
+                string html;
+                using (var reader = new StreamReader(stream, Encoding.UTF8, true)) html = await reader.ReadToEndAsync();
+                var settings = JsonUtil.Read(AppPaths.SettingsFile, new JObject()) as JObject ?? new JObject();
+                var themeMode = ((string)settings["theme"] ?? "system").Trim().ToLowerInvariant();
+                var theme = themeMode == "light" || themeMode == "dark" ? themeMode : WindowsPrefersLightTheme() ? "light" : "dark";
+                var skin = ((string)settings["skin"] ?? (EditionInfo.IsOpenSource ? "open" : "fusion")).Trim().ToLowerInvariant();
+                skin = new string(skin.Where(ch => char.IsLetterOrDigit(ch) || ch == '-' || ch == '_').Take(80).ToArray());
+                if (skin.Length == 0) skin = EditionInfo.IsOpenSource ? "open" : "fusion";
+                var edition = EditionInfo.IsOpenSource ? "opensource" : "local";
+                html = html.Replace("<html lang=\"zh-CN\">", "<html lang=\"zh-CN\" data-theme=\"" + theme + "\" data-theme-mode=\"" + themeMode + "\" data-skin=\"" + skin + "\" data-edition=\"" + edition + "\">");
+                await WriteBytesAsync(response, Encoding.UTF8.GetBytes(html), "text/html; charset=utf-8");
+            }
+        }
+
+        private static bool WindowsPrefersLightTheme()
+        {
+            try
+            {
+                var value = Microsoft.Win32.Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 0);
+                return Convert.ToInt32(value) != 0;
+            }
+            catch { return false; }
+        }
+
         private async Task ServeResource(HttpListenerResponse response, string resource, string contentType, bool injectSecret)
         {
             using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream(resource))
@@ -3258,6 +3382,32 @@ namespace ClaudeCodeWorkbench
                 case ".webp": return "image/webp";
                 case ".gif": return "image/gif";
                 case ".bmp": return "image/bmp";
+                case ".html":
+                case ".htm": return "text/html; charset=utf-8";
+                case ".txt":
+                case ".md":
+                case ".csv":
+                case ".log": return "text/plain; charset=utf-8";
+                case ".json": return "application/json; charset=utf-8";
+                case ".js":
+                case ".ts":
+                case ".tsx":
+                case ".jsx": return "application/javascript; charset=utf-8";
+                case ".css": return "text/css; charset=utf-8";
+                case ".xml": return "application/xml; charset=utf-8";
+                case ".yaml":
+                case ".yml":
+                case ".vue":
+                case ".cs":
+                case ".py":
+                case ".ps1":
+                case ".java":
+                case ".go":
+                case ".rs":
+                case ".cpp":
+                case ".c":
+                case ".h":
+                case ".sql": return "text/plain; charset=utf-8";
                 default: return null;
             }
         }
@@ -3332,16 +3482,7 @@ namespace ClaudeCodeWorkbench
             {
                 try { job.Worker.Stop(); } catch { }
             }
-            if (!string.IsNullOrWhiteSpace(job.PidPath) && File.Exists(job.PidPath))
-            {
-                try
-                {
-                    var pid = File.ReadAllText(job.PidPath).Trim();
-                    using (var killer = Process.Start(new ProcessStartInfo("taskkill.exe", "/PID " + pid + " /T /F") { UseShellExecute = false, CreateNoWindow = true }))
-                        if (killer != null) killer.WaitForExit(8000);
-                }
-                catch { }
-            }
+            try { KillVerifiedJobProcess(job); } catch { }
             try { if (job.Process != null && !job.Process.HasExited) job.Process.Kill(); } catch { }
             job.IsActive = false;
             job.Busy = false;
@@ -3384,11 +3525,20 @@ namespace ClaudeCodeWorkbench
         {
             try
             {
+                string processStartedAt;
+                long processStartedAtTicks;
+                using (var current = Process.GetCurrentProcess())
+                {
+                    processStartedAt = DurableProcessIdentity.StartedAtUtc(current);
+                    processStartedAtTicks = DurableProcessIdentity.StartedAtUtcTicks(current);
+                }
                 JsonUtil.WriteAtomic(Path.Combine(AppPaths.Data, "runtime-state.json"), new JObject
                 {
                     ["pid"] = Process.GetCurrentProcess().Id, ["port"] = _port, ["state"] = state,
                     ["protocolVersion"] = ProtocolVersion, ["appVersion"] = Program.AppContractVersion,
                     ["executablePath"] = Assembly.GetExecutingAssembly().Location,
+                    ["processStartedAtUtc"] = processStartedAt,
+                    ["processStartedAtUtcTicks"] = processStartedAtTicks,
                     ["authProtected"] = SecretStore.Protect(_secret),
                     ["activeJobs"] = _jobs.Values.Count(job => job.IsActive), ["updatedAt"] = ProviderStore.NowIso()
                 });

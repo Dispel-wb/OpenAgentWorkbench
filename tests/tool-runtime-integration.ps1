@@ -54,6 +54,16 @@ try {
         image=@{enabled=$false;protocol='openai-images';baseUrl='';models=@()}
     } | Out-Null
 
+    $shapeSession = [guid]::NewGuid().ToString()
+    $shape = Api $connection '/api/chat/start' 'POST' @{
+        workspace=$root;prompt='scalar-message-event';sessionId=$shapeSession;claudeSessionId=$shapeSession;resume=$false
+        requestId=[guid]::NewGuid().ToString();providerId='offline-tool-runtime';model='offline-model';effort='low';permissionMode='readonly'
+        attachments=@();allowedDirs=@();allowedTools=@();disallowedTools=@()
+    }
+    $shapePoll = Wait-Until { Api $connection ("/api/chat/poll/$($shape.jobId)?after=0") } { param($v) $null -ne $v -and $v.status.state -eq 'completed' }
+    $shapeStream = Get-Content -LiteralPath (Join-Path $root ".claude-gui-v2\runs\$($shape.jobId)\stream.jsonl") -Raw -Encoding UTF8
+    if (-not $shapeStream.Contains('worker message may be a scalar')) { throw 'Scalar-message Worker event was lost during durable sanitization' }
+
     $timeoutSession = [guid]::NewGuid().ToString()
     $timeout = Api $connection '/api/chat/start' 'POST' @{
         workspace=$root;prompt='tool-runtime-timeout';sessionId=$timeoutSession;claudeSessionId=$timeoutSession;resume=$false
@@ -83,7 +93,7 @@ try {
     if ([int]$cancelEvidence.summary.cancelledTools -ne 1 -or [int]$cancelEvidence.summary.timedOutTools -ne 0) { throw 'Cancelled ToolCall evidence is incorrect' }
 
     [pscustomobject]@{
-        ToolTimeout='OK';TimeoutTerminatesRun='OK';UserCancellation='OK';SecretRedaction='OK';PolicyPersistence='OK'
+        ScalarMessageEvent='OK';ToolTimeout='OK';TimeoutTerminatesRun='OK';UserCancellation='OK';SecretRedaction='OK';PolicyPersistence='OK'
         TimeoutRun=$timeout.jobId;CancelledRun=$cancel.jobId;Workspace=$root
     } | Format-List
 }

@@ -2,6 +2,10 @@
 
 Open Agent Workbench includes or interfaces with the following third-party components. Their original licenses and terms continue to apply.
 
+## Design research (not redistributed)
+
+The project studied the public product pages and screenshots of PI-Desktop (<https://github.com/vastsa/PI-Desktop>), which was published under LGPL-3.0 at the time of review. No PI-Desktop source code, React components, Rust modules, stylesheets, icons, screenshots, copy, or brand assets are included, linked, translated, or redistributed. Open Agent Workbench's shell is an independent C#/.NET implementation under this project's MIT license. See `docs/FRONTEND_ORIGIN.md` for the recorded boundary.
+
 ## Bundled JavaScript libraries
 
 - Vue.js 3.5.22 — MIT License — Copyright (c) 2018-present Yuxi (Evan) You and Vue contributors.

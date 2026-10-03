@@ -68,7 +68,7 @@ namespace ClaudeCodeWorkbench
             var enabledTools = EnabledTools(config, mode);
             if (enabledTools.Count == 0) args.Add("--no-tools");
             else { args.Add("--tools"); args.Add(string.Join(",", enabledTools)); }
-            if (mode != "full")
+            if (PermissionModeContract.PiUsesWorkspacePolicy(mode))
             {
                 var policyPath = (string)config["policyPath"] ?? "";
                 if (!File.Exists(policyPath)) throw new FileNotFoundException("Pi 工作区策略扩展缺失；未启动工具。", policyPath);
@@ -94,7 +94,7 @@ namespace ClaudeCodeWorkbench
             var edit = new[] { "read", "edit", "write", "grep", "find", "ls" };
             var shell = Environment.OSVersion.Platform == PlatformID.Win32NT ? "powershell" : "bash";
             var full = new[] { "read", shell, "edit", "write", "grep", "find", "ls" };
-            IEnumerable<string> selected = mode == "full" ? full : mode == "edit" || mode == "agent" ? edit : read;
+            IEnumerable<string> selected = PermissionModeContract.IsFullAccess(mode) ? full : mode == "edit" ? edit : read;
             if (mode == "scoped")
             {
                 var requested = new HashSet<string>((config["allowedTools"] as JArray ?? new JArray()).Values<string>()

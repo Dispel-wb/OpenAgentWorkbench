@@ -18,20 +18,22 @@ namespace ClaudeCodeWorkbench
         private static readonly object CacheGate = new object();
         private static readonly Dictionary<string, CachedIndex> Cache = new Dictionary<string, CachedIndex>(StringComparer.OrdinalIgnoreCase);
 
-        public static JObject Build(string workspace, string prompt)
+        public static JObject Build(string workspace, string prompt, string harness = "claude")
         {
             var items = new List<JObject>();
             var roots = new[]
             {
                 new { Path = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".claude", "skills"), Scope = "user" },
                 new { Path = Path.Combine(workspace, ".claude", "skills"), Scope = "project" }
+                ,new { Path = string.IsNullOrWhiteSpace(AppPaths.SharedLibrary) ? "" : Path.Combine(AppPaths.SharedLibrary, "skills"), Scope = "shared" }
             };
             foreach (var root in roots)
             {
+                if (!string.Equals(harness, "claude", StringComparison.OrdinalIgnoreCase) && root.Scope != "shared") continue;
                 items.AddRange(Index(root.Path, root.Scope));
             }
             var matched = new JArray(items.Where(item => ((bool?)item["active"] ?? false) && Matches(prompt, (string)item["name"], (string)item["description"])).Select(item => item.DeepClone()));
-            return new JObject { ["schemaVersion"] = 2, ["strategy"] = "trusted-metadata-index-then-Skill-tool", ["items"] = new JArray(items), ["matched"] = matched };
+            return new JObject { ["schemaVersion"] = 2, ["strategy"] = "trusted-metadata-index-then-bounded-core-adapter", ["items"] = new JArray(items), ["matched"] = matched };
         }
 
         private static IEnumerable<JObject> Index(string rootPath, string scope)
@@ -70,8 +72,19 @@ namespace ClaudeCodeWorkbench
         public static string RoutingHint(JObject catalog)
         {
             var matched = catalog?["matched"] as JArray ?? new JArray(); if (matched.Count == 0) return "";
-            var lines = matched.OfType<JObject>().Select(item => "- " + (string)item["name"] + ": " + (string)item["description"]);
-            return "\n\n<workbench_skill_routing>\n以下仅是命中的 Skill 元数据，不含 Skill 正文。需要使用时请通过 Skill 工具按需加载完整 SKILL.md；未命中的 Skill 不得占用上下文。\n" + string.Join("\n", lines) + "\n</workbench_skill_routing>";
+            var entries = new List<string>(); var remaining = 16000;
+            foreach (var item in matched.OfType<JObject>().Take(4))
+            {
+                var path = (string)item["path"] ?? "";
+                if (!((bool?)item["active"] ?? false) || !File.Exists(path)) continue;
+                string body; try { using (var reader = new StreamReader(path, Encoding.UTF8, true)) { var buffer = new char[6001]; var count = reader.Read(buffer, 0, buffer.Length); body = new string(buffer, 0, Math.Min(count, 6000)); if (count > 6000 || !reader.EndOfStream) body += "\n[正文已截断；需要时从本机文件读取剩余内容]"; } } catch { continue; }
+                if (body.Length > remaining) body = body.Substring(0, remaining);
+                if (body.Length == 0) break;
+                remaining -= body.Length;
+                entries.Add("### " + (string)item["name"] + " (" + (string)item["scope"] + ")\n来源文件：" + path + "\n" + body);
+            }
+            if (entries.Count == 0) return "";
+            return "\n\n<workbench_matched_skills>\n以下为已启用、按本轮请求命中的本地 Skill。工作台只注入匹配项的限量正文，使 Claude、Codex、DSHarness、Pi 都能读取文字步骤；具体工具仍受各核心权限约束。\n" + string.Join("\n\n", entries) + "\n</workbench_matched_skills>";
         }
 
         public static void Invalidate()
@@ -121,7 +134,7 @@ namespace ClaudeCodeWorkbench
                 var catalog = SkillCatalog.Build(root, "please use review-code for this task");
                 if ((catalog["items"] as JArray ?? new JArray()).Count < 1 || (catalog["matched"] as JArray ?? new JArray()).Count != 1) return 61;
                 var hint = SkillCatalog.RoutingHint(catalog);
-                if (!hint.Contains("review-code") || hint.Contains("FULL_BODY_SENTINEL")) return 62;
+                if (!hint.Contains("review-code") || !hint.Contains("FULL_BODY_SENTINEL")) return 62;
                 var missed = SkillCatalog.Build(root, "unrelated weather question");
                 if ((missed["matched"] as JArray ?? new JArray()).Count != 0 || SkillCatalog.RoutingHint(missed).Length != 0) return 63;
                 File.AppendAllText(skillFile, "modified-after-trust\n", new UTF8Encoding(false)); SkillCatalog.Invalidate();
@@ -129,7 +142,7 @@ namespace ClaudeCodeWorkbench
                 if ((modified["matched"] as JArray ?? new JArray()).Count != 0 || !((bool?)ExtensionTrustPolicy.WorkspaceSummary(root)["blocked"] ?? false)) return 65;
                 return 0;
             }
-            catch { return 64; }
+            catch (Exception ex) { try { File.WriteAllText(Path.Combine(root, "skill-selftest-error.txt"), ex.ToString()); } catch { } return 64; }
         }
     }
 }

@@ -77,6 +77,7 @@ namespace ClaudeCodeWorkbench
             if (descriptor.Count == 0) throw new FileNotFoundException("任务隔离信息不存在");
             if ((string)descriptor["kind"] == "git-worktree") descriptor["changes"] = GitChanges((string)descriptor["worktreeRoot"]);
             else if ((string)descriptor["kind"] == "filesystem-snapshot") descriptor["changes"] = SnapshotChanges(descriptor);
+            AddChangeSummary(descriptor);
             return descriptor;
         }
 
@@ -283,7 +284,12 @@ namespace ClaudeCodeWorkbench
             {
                 var current = Path.Combine(source, relative); var before = Path.Combine(snapshot, relative);
                 var state = !File.Exists(before) ? "added" : !File.Exists(current) ? "deleted" : SameFile(before, current) ? "unchanged" : "modified";
-                if (state != "unchanged") values.Add(new JObject { ["path"] = relative, ["state"] = state });
+                if (state != "unchanged")
+                {
+                    var item = new JObject { ["path"] = relative, ["state"] = state };
+                    AddSnapshotLineStats(item, before, current);
+                    values.Add(item);
+                }
             }
             return values;
         }
@@ -316,6 +322,7 @@ namespace ClaudeCodeWorkbench
         {
             var raw = GitOutput(root, "status --porcelain=v1 -z --untracked-files=all", 12000);
             var fields = raw.Split(new[] { '\0' }, StringSplitOptions.RemoveEmptyEntries);
+            var lineStats = GitLineStats(root);
             var changes = new JArray();
             for (var index = 0; index < fields.Length; index++)
             {
@@ -326,9 +333,97 @@ namespace ClaudeCodeWorkbench
                 var item = new JObject { ["state"] = state, ["path"] = path };
                 if ((state.IndexOf('R') >= 0 || state.IndexOf('C') >= 0) && index + 1 < fields.Length)
                     item["originalPath"] = fields[++index].Replace('/', Path.DirectorySeparatorChar);
+                AddGitLineStats(root, item, lineStats);
                 changes.Add(item);
             }
             return changes;
+        }
+
+        private static void AddChangeSummary(JObject descriptor)
+        {
+            var changes = descriptor["changes"] as JArray ?? new JArray();
+            var known = changes.OfType<JObject>().Where(item => (bool?)item["lineStatsKnown"] ?? false).ToArray();
+            descriptor["changeSummary"] = new JObject
+            {
+                ["files"] = changes.Count,
+                ["additions"] = known.Sum(item => (long?)item["additions"] ?? 0L),
+                ["deletions"] = known.Sum(item => (long?)item["deletions"] ?? 0L),
+                ["unknownLineFiles"] = changes.Count - known.Length
+            };
+        }
+
+        private static Dictionary<string, Tuple<long, long>> GitLineStats(string root)
+        {
+            var result = new Dictionary<string, Tuple<long, long>>(StringComparer.OrdinalIgnoreCase);
+            var fields = GitOutput(root, "diff --numstat -z HEAD", 30000).Split(new[] { '\0' }, StringSplitOptions.None);
+            for (var index = 0; index < fields.Length; index++)
+            {
+                var columns = fields[index].Split('\t');
+                long additions, deletions;
+                if (columns.Length < 3 || !long.TryParse(columns[0], out additions) || !long.TryParse(columns[1], out deletions)) continue;
+                var value = Tuple.Create(additions, deletions);
+                var path = columns[2];
+                if (path.Length > 0) result[path.Replace('/', Path.DirectorySeparatorChar)] = value;
+                else if (index + 2 < fields.Length)
+                {
+                    result[fields[++index].Replace('/', Path.DirectorySeparatorChar)] = value;
+                    result[fields[++index].Replace('/', Path.DirectorySeparatorChar)] = value;
+                }
+            }
+            return result;
+        }
+
+        private static void AddGitLineStats(string root, JObject change, Dictionary<string, Tuple<long, long>> lineStats)
+        {
+            var state = (string)change["state"] ?? "";
+            if (string.Equals(state, "??", StringComparison.Ordinal))
+            {
+                long lines;
+                if (TryCountTextLines(Inside(root, (string)change["path"]), out lines)) SetLineStats(change, lines, 0L);
+                else change["lineStatsKnown"] = false;
+                return;
+            }
+            Tuple<long, long> stats;
+            var current = (string)change["path"] ?? "";
+            var original = (string)change["originalPath"] ?? "";
+            if (lineStats.TryGetValue(current, out stats) || (original.Length > 0 && lineStats.TryGetValue(original, out stats))) SetLineStats(change, stats.Item1, stats.Item2);
+            else change["lineStatsKnown"] = false;
+        }
+
+        private static void AddSnapshotLineStats(JObject change, string before, string current)
+        {
+            var state = (string)change["state"] ?? "";
+            long lines;
+            if (state == "added" && TryCountTextLines(current, out lines)) { SetLineStats(change, lines, 0L); return; }
+            if (state == "deleted" && TryCountTextLines(before, out lines)) { SetLineStats(change, 0L, lines); return; }
+            if (state == "modified")
+            {
+                var compared = Git(Path.GetDirectoryName(current), "diff --no-index --numstat -- " + Quote(before) + " " + Quote(current), 30000);
+                var raw = (compared.ExitCode == 0 || compared.ExitCode == 1 ? compared.Output : "").Trim();
+                var columns = (raw.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault() ?? "").Split('\t');
+                long additions, deletions;
+                if (columns.Length >= 2 && long.TryParse(columns[0], out additions) && long.TryParse(columns[1], out deletions)) { SetLineStats(change, additions, deletions); return; }
+            }
+            change["lineStatsKnown"] = false;
+        }
+
+        private static void SetLineStats(JObject change, long additions, long deletions)
+        {
+            change["lineStatsKnown"] = true; change["additions"] = additions; change["deletions"] = deletions;
+        }
+
+        private static bool TryCountTextLines(string path, out long lines)
+        {
+            lines = 0L;
+            if (!File.Exists(path)) return false;
+            var info = new FileInfo(path);
+            if (info.Length > 4L * 1024 * 1024) return false;
+            var bytes = File.ReadAllBytes(path);
+            if (bytes.Any(value => value == 0)) return false;
+            if (bytes.Length == 0) return true;
+            lines = bytes.LongCount(value => value == (byte)'\n');
+            if (bytes[bytes.Length - 1] != (byte)'\n') lines++;
+            return true;
         }
 
         private static void RevertAppliedSource(string jobId, JObject descriptor, JArray journal)
@@ -502,6 +597,8 @@ namespace ClaudeCodeWorkbench
                 if (Exec(isolated.WorkerWorkspace, "mv " + Q("rename old.txt") + " " + Q("rename 新.txt")).ExitCode != 0) return 54;
                 var described = TaskWorkspaceManager.Describe(runId);
                 if ((described["changes"] as JArray ?? new JArray()).Count < 4) return 55;
+                if (((int?)described["changeSummary"]?["files"] ?? 0) < 4 || ((long?)described["changeSummary"]?["additions"] ?? 0L) < 3L ||
+                    ((long?)described["changeSummary"]?["deletions"] ?? 0L) < 2L || ((int?)described["changeSummary"]?["unknownLineFiles"] ?? -1) != 0) return 66;
                 if ((string)TaskWorkspaceManager.Diff(runId, "second 中文 file.txt")["diff"] == "") return 56;
                 File.WriteAllText(Path.Combine(gitRoot, "new file 中文.txt"), "source-conflict", new UTF8Encoding(false));
                 var conflictBlocked = false; try { TaskWorkspaceManager.Apply(runId, new JArray("tracked.txt", "new file 中文.txt")); } catch (IOException) { conflictBlocked = true; }
@@ -537,7 +634,10 @@ namespace ClaudeCodeWorkbench
                 File.WriteAllText(Path.Combine(plainRoot, "plain.txt"), "plain-after", new UTF8Encoding(false));
                 File.WriteAllText(Path.Combine(plainRoot, "added.txt"), "added", new UTF8Encoding(false));
                 File.WriteAllText(oldStateFile, "state-after", new UTF8Encoding(false));
-                if ((TaskWorkspaceManager.Describe(plainRun)["changes"] as JArray ?? new JArray()).Count != 2) return 64;
+                var plainDescription = TaskWorkspaceManager.Describe(plainRun);
+                if ((plainDescription["changes"] as JArray ?? new JArray()).Count != 2) return 64;
+                if ((int?)plainDescription["changeSummary"]?["files"] != 2 || (long?)plainDescription["changeSummary"]?["additions"] != 2L ||
+                    (long?)plainDescription["changeSummary"]?["deletions"] != 1L || (int?)plainDescription["changeSummary"]?["unknownLineFiles"] != 0) return 67;
                 TaskWorkspaceManager.Revert(plainRun);
                 if (File.ReadAllText(Path.Combine(plainRoot, "plain.txt"), Encoding.UTF8) != "plain-before" || File.Exists(Path.Combine(plainRoot, "added.txt")) ||
                     File.ReadAllText(oldStateFile, Encoding.UTF8) != "state-after") return 65;

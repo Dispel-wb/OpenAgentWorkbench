@@ -85,7 +85,7 @@ namespace ClaudeCodeWorkbench
                     ["executable"] = node, ["entry"] = entry, ["profile"] = "sdk", ["patchPath"] = patchPath,
                     ["workspace"] = request["workspace"], ["model"] = request["model"],
                     ["permissionMode"] = permission, ["sessionId"] = request["sessionId"],
-                    ["home"] = Path.Combine(AppPaths.Data, "worker-homes", "dsh"), ["maxTurns"] = request["maxTurns"]
+                    ["home"] = Path.Combine(WorkspaceLayout.HarnessRoot("dsh"), "home"), ["maxTurns"] = request["maxTurns"]
                 });
                 return new AgentWorkerLaunch { Harness = "dsh", Executable = System.Windows.Forms.Application.ExecutablePath,
                     Arguments = new List<string> { "--agent-worker-bridge", configPath } };
@@ -335,7 +335,7 @@ namespace ClaudeCodeWorkbench
         private static string SessionStatePath(string harness, string sessionId)
         {
             using (var sha = SHA256.Create())
-                return Path.Combine(AppPaths.Data, "worker-sessions", harness, BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(sessionId))).Replace("-", "") + ".json");
+                return Path.Combine(WorkspaceLayout.HarnessRoot(harness), "sessions", BitConverter.ToString(sha.ComputeHash(Encoding.UTF8.GetBytes(sessionId))).Replace("-", "") + ".json");
         }
 
         private static JObject ProbeExecutable(string id, string path, bool probe)

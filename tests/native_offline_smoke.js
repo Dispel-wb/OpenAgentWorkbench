@@ -39,6 +39,7 @@ async function main() {
 
   const bootstrap = await api('/api/bootstrap');
   const providers = await api('/api/providers');
+  const duplicate = await api('/api/providers/check-token', { method: 'POST', body: JSON.stringify({ token: 'sk-test-only' }) });
   const adapterResponse = await fetch(`${base}/adapter/offline-dual/v1/messages/count_tokens`, {
     method: 'POST',
     headers: { Authorization: 'Bearer sk-test-only', 'Content-Type': 'application/json' },
@@ -55,6 +56,9 @@ async function main() {
     dualImage: provider.data.image.enabled,
     publicHasToken: providers.data[0].hasToken,
     publicLeaksToken: Object.prototype.hasOwnProperty.call(providers.data[0], 'tokenEncrypted'),
+    duplicateStatus: duplicate.status,
+    duplicateMatched: duplicate.data.provider?.id === 'offline-dual',
+    duplicateLeaksToken: !!duplicate.data.provider && (Object.prototype.hasOwnProperty.call(duplicate.data.provider, 'tokenEncrypted') || Object.prototype.hasOwnProperty.call(duplicate.data.provider, 'token')),
     savedChineseTitle: bootstrap.data.sessions[0].title,
     adapterStatus: adapterResponse.status,
     adapterInputTokens: tokenCount.input_tokens,
@@ -67,7 +71,7 @@ async function main() {
   };
   console.log(JSON.stringify(result, null, 2));
   if (result.unauthorizedStatus !== 403 || result.providerStatus !== 200 || !result.dualText || !result.dualImage ||
-      !result.publicHasToken || result.publicLeaksToken || result.savedChineseTitle !== '中文编码验证' ||
+      !result.publicHasToken || result.publicLeaksToken || result.duplicateStatus !== 200 || !result.duplicateMatched || result.duplicateLeaksToken || result.savedChineseTitle !== '中文编码验证' ||
       result.adapterStatus !== 200 || !result.cssEmbedded || result.evidenceStatus !== 200 || result.evidenceRunId !== 'offline-fixture' || !result.evidenceSummaryShape || result.backend !== 'C#/.NET native host' || !result.trayMode) {
     process.exitCode = 1;
   }

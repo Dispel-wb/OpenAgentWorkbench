@@ -1,7 +1,11 @@
 # Changelog
 
-## Unreleased — 1.0.0 readiness work
+## 1.0.0 — 2026-10-03
 
+- Completed the frozen four-kernel 72-hour validation: 259,211 active seconds, 831 successful cycles each for Claude, Codex, DSHarness and Pi, zero failures, zero suspension gaps, and matching hashes for every frozen input at completion.
+- Promoted the Open Source edition and public documentation from Preview to v1.0.0. The Windows executable remains unsigned; clean-machine and third-party cloud-provider coverage remain documented limitations.
+
+- Added an independently implemented native C# shell presentation contract, a visible command-search entry and host-driven navigation/content/work-panel sizing. Documented PI-Desktop as public design research only; no PI-Desktop code, components, styles or assets are included or linked.
 - Raised native file, folder, import and export dialogs to the foreground of their Workbench owner. API auto-configuration now ignores a wrong/default selection, probes the supported provider catalog until the Key matches, and fills the provider, protocol, endpoints and models without recording failed candidate probes as provider-health failures.
 - Increased workbench typography and centered/enlarged the empty new-conversation surface. Re-clicking New Conversation now reuses the current untouched draft instead of creating duplicate empty tasks.
 - Pinned the Local edition to the Claude Code workspace at `D:\work\Claude`, including legacy session/settings normalization and a single-workspace UI; Open Source retains its multi-workspace project picker.
@@ -13,8 +17,8 @@
 - Added a fail-closed Pi policy extension that canonicalizes file paths, blocks access outside the selected workspace and protects `.git`/`.claude-gui-v2` writes. PowerShell remains Full-only because this policy is not an OS sandbox.
 - Fixed build bootstrap so a stale, non-runnable `.venv` launcher is rejected instead of being selected merely because the file exists.
 - Made atomic JSON persistence use collision-free temporary files with bounded contention retries, preventing concurrent Host/Worker status writers from turning an already durable success into a sharing-violation failure.
-- Verified the current unsigned OpenSource bytes with a fresh 70/70 offline regression and same-environment reproducible build. This does not satisfy the new 72-hour or clean-Windows requirements.
-- Candidate binaries now carry 1.0.0 metadata so the exact intended release bytes can undergo long-term testing. This is an unreleased candidate, not a completed certification or published stable release.
+- Verified the current unsigned OpenSource bytes with the complete offline regression and same-environment reproducible build; the separate frozen Local candidate subsequently completed the four-kernel 72-hour run recorded above.
+- Candidate binaries carry 1.0.0 metadata and the Open Source build is now published as v1.0.0.
 - Fixed duplicate rendering when a buffered streaming delta and terminal result arrive in the same poll; verified the old failure and corrected behavior in native WebView2.
 - Fixed terminal polling returning stale metadata when background reconciliation wins the finalization race; a controlled two-case regression reproduces the old failure without relying on timing luck.
 - Added an isolated 70-case offline regression runner with binary/script hashes and retained per-case logs; corrected stale Local-edition assumptions, explicit UTF-8 decoding, inherited provider defaults and missing offline CLI/fallback fixtures. All 100 fault cycles retain their assertions with a separate hosted-runner time budget.
@@ -26,7 +30,7 @@
 - Fixed fresh-start workspace precedence so the UI does not replace the Host's C-drive or Unicode workspace with a hard-coded D-drive default.
 - Added a shared raw-frame retention budget for DSHarness, covering both the mailbox and pre-acknowledgement notifications.
 - Extended CI to restore and test the actual Pi runtime and reject workspace/bootstrap and aggregate-buffer regressions.
-- Signing is an explicitly accepted exemption for the requested 1.0.0; all other readiness claims still require evidence. No stable version is declared by this entry.
+- Signing is an explicitly disclosed exemption for v1.0.0; no trusted-publisher claim is made.
 
 ## 0.7.0-preview.1 — unreleased candidate
 

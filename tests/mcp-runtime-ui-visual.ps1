@@ -3,9 +3,10 @@ param(
     [Parameter(Mandatory = $true)][string]$Node,
     [Parameter(Mandatory = $true)][string]$NodeModules,
     [string]$BrowserExecutable = 'C:\Program Files\Google\Chrome\Application\chrome.exe',
-    [string]$OutputDir = $PSScriptRoot
+    [string]$OutputDir = ''
 )
 $ErrorActionPreference = 'Stop'
+$OutputDir = if ($OutputDir) { $OutputDir } else { $PSScriptRoot }
 
 function Wait-Until([scriptblock]$Action, [scriptblock]$Predicate, [int]$Seconds = 25) {
     $expires = (Get-Date).AddSeconds($Seconds)

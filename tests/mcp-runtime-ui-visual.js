@@ -20,7 +20,8 @@ const settings = {
 async function openExtensions(page) {
   await page.goto(baseUrl, { waitUntil: 'domcontentloaded' });
   await page.locator('.app-shell').waitFor({ state: 'attached' });
-  await page.locator('.workbench-tools button').filter({ hasText: '扩展' }).evaluate(button => button.click());
+  await page.locator('.topbar-actions button[title="显示工作面板"]').click();
+  await page.locator('.inspector header nav button').filter({ hasText: '扩展' }).click();
   await page.locator('.mcp-runtime-summary').waitFor({ state: 'visible' });
   await page.locator('.extension-actions button').filter({ hasText: '刷新' }).evaluate(button => button.click());
   await page.waitForTimeout(250);

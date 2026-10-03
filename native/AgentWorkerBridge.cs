@@ -57,11 +57,21 @@ namespace ClaudeCodeWorkbench
         private static BridgeOutcome RunCodex(JObject config, JObject state, string prompt)
         {
             var threadId = ((string)state["threadId"] ?? "").Trim();
-            var arguments = new List<string> { "exec", "--json", "--color", "never", "--skip-git-repo-check", "-C", (string)config["workspace"] ?? Environment.CurrentDirectory };
+            var permission = PermissionModeContract.Normalize((string)config["permissionMode"]);
+            var arguments = new List<string>();
+            // Current Codex exposes the approval policy as a root option, while
+            // sandbox remains an `exec` option. Root options must precede `exec`.
+            if (!PermissionModeContract.IsFullAccess(permission))
+            {
+                arguments.Add("--ask-for-approval"); arguments.Add("never");
+            }
+            arguments.AddRange(new[] { "exec", "--json", "--color", "never", "--skip-git-repo-check", "-C", (string)config["workspace"] ?? Environment.CurrentDirectory });
             AddModel(arguments, config);
-            var permission = ((string)config["permissionMode"] ?? "readonly").ToLowerInvariant();
-            if (permission == "full") arguments.Add("--dangerously-bypass-approvals-and-sandbox");
-            else { arguments.Add("--sandbox"); arguments.Add(permission == "readonly" || permission == "plan" ? "read-only" : "workspace-write"); }
+            if (PermissionModeContract.IsFullAccess(permission)) arguments.Add("--dangerously-bypass-approvals-and-sandbox");
+            else
+            {
+                arguments.Add("--sandbox"); arguments.Add(PermissionModeContract.CodexSandbox(permission));
+            }
             if (permission != "readonly" && permission != "plan")
                 foreach (var directory in config["addDirs"] as JArray ?? new JArray()) { arguments.Add("--add-dir"); arguments.Add((string)directory ?? ""); }
             if (threadId.Length > 0) { arguments.Add("resume"); arguments.Add(threadId); }

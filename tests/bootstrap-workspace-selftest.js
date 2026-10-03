@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 let definition;
 global.Vue = { createApp(value) { definition = value; return { config: {}, mount() {} }; }, nextTick(fn) { if (fn) fn(); return Promise.resolve(); } };
 global.window = { addEventListener() {}, removeEventListener() {}, getSelection() { return null; } };
-global.document = { documentElement: { dataset: {} }, querySelector() { return null; }, createElement() { return {}; } };
+global.document = { documentElement: { dataset: {}, style: { setProperty() {} } }, querySelector() { return null; }, getElementById() { return null; }, createElement() { return {}; } };
 global.localStorage = { getItem() { return null; }, removeItem() {} };
 for (const name of ['ui-store', 'provider-catalog', 'document-ui', 'workflow-ui'])
   vm.runInThisContext(fs.readFileSync(path.join(__dirname, '../static/modules', name + '.js'), 'utf8'));
@@ -35,7 +35,8 @@ async function main() {
   await local.bootstrap();
   assert.equal(local.workspace, 'D:\\work\\Claude', 'Local canonical workspace');
   assert.equal(local.settings.workspace, 'D:\\work\\Claude', 'Local settings workspace');
-  assert.equal(local.sessions[0].workspace, 'D:\\work\\Claude', 'Local legacy session workspace');
+  assert.equal(local.sessions[0].workspace, 'C:\\old', 'Local session keeps its own task workspace');
+  assert.equal(local.sessions[0].workspaceRoot, 'D:\\work\\Claude', 'Local session is grouped under the canonical workspace root');
   console.log(JSON.stringify({ bootstrapWorkspace: 'PASS', cases: fixtures.length + 1 }));
 }
 main().catch(error => { console.error(error); process.exitCode = 1; });

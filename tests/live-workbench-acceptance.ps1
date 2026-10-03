@@ -4,10 +4,11 @@ param(
     [string]$SourceData='D:\work\Claude\.claude-gui-v2',
     [string]$ProviderId='', [string]$Model='',
     [switch]$VerifyBoundary,
-    [string]$OutputDirectory=(Join-Path $PSScriptRoot '..\dist\live-acceptance'),
+    [string]$OutputDirectory='',
     [ValidateSet('files','dag','all')][string]$Scenario='all'
 )
 $ErrorActionPreference='Stop'
+$OutputDirectory=if($OutputDirectory){$OutputDirectory}else{Join-Path $PSScriptRoot '..\dist\live-acceptance'}
 if(-not $AllowPaid){throw 'Explicit -AllowPaid is required. This test makes real billable requests.'}
 $Executable=(Resolve-Path -LiteralPath $Executable).Path
 $OutputDirectory=[IO.Path]::GetFullPath($OutputDirectory)

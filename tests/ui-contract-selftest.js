@@ -36,8 +36,32 @@ global.HTMLElement=class {};
 const root = path.resolve(__dirname, '..');
 const moduleSources = ['ui-store.js', 'provider-catalog.js','document-ui.js','workflow-ui.js'].map(name => fs.readFileSync(path.join(root, 'static', 'modules', name), 'utf8'));
 const appSource = [...moduleSources, fs.readFileSync(path.join(root, 'static', 'app.js'), 'utf8')].join('\n');
+const indexSource = fs.readFileSync(path.join(root, 'static', 'index.html'), 'utf8');
+const styleSource = fs.readFileSync(path.join(root, 'static', 'styles.css'), 'utf8');
+const providerStoreSource = fs.readFileSync(path.join(root, 'native', 'ProviderStore.cs'), 'utf8');
 vm.runInThisContext(appSource, { filename: 'app.js' });
 if (!definition) throw new Error('Vue application contract not captured');
+if (!indexSource.includes("providerEditorMode==='list'") || !indexSource.includes('配置模型') || !indexSource.includes('更换令牌') ||
+    !indexSource.includes('令牌已加密保存，不可查看明文') || !indexSource.includes("providerEditorMode==='add'||providerEditorMode==='token'") ||
+    !appSource.includes('/api/providers/check-token') || !providerStoreSource.includes('FindByToken') || !providerStoreSource.includes('return Public(item)')) {
+  throw new Error('API add, model settings, token replacement, deletion, duplicate detection, or secret redaction is not separated');
+}
+if (!styleSource.includes('keep inline fragments at body-reading size') || !styleSource.includes('min-height:26px;display:inline-flex') || !styleSource.includes('html[data-skin="codex"] .inline-code') ||
+    !styleSource.includes('html[data-edition="local"]:not([data-skin="claude"]):not([data-skin="codex"]) .inline-code') ||
+    !styleSource.includes('html[data-edition="local"][data-skin="claude"] .markdown-body .md-table-wrap')) {
+  throw new Error('Mode-specific Markdown inline-code or Claude table skin is incomplete');
+}
+for(const selector of ['[data-edition="local"][data-skin="claude"][data-theme="dark"]','[data-edition="local"][data-skin="claude"][data-theme="light"]','[data-edition="local"][data-skin="codex"][data-theme="dark"]','[data-edition="local"][data-skin="codex"][data-theme="light"]',':not([data-skin="claude"]):not([data-skin="codex"])[data-theme="dark"]',':not([data-skin="claude"]):not([data-skin="codex"])[data-theme="light"]','[data-edition="opensource"][data-theme="dark"]','[data-edition="opensource"][data-theme="light"]']){
+  if(!styleSource.includes(selector))throw new Error('Markdown blockquote theme matrix is missing '+selector);
+}
+if(!styleSource.includes('--quote-bg:')||!styleSource.includes('border-left:3px solid var(--quote-accent)'))throw new Error('Markdown blockquote must use semantic theme variables instead of a fixed dark bar');
+if (!appSource.includes('async showQueuedSubmission(item,live=false)') ||
+    !appSource.includes("this.status='方向调整已发送到当前任务'") ||
+    !appSource.includes("result.reason==='worker_steering_unsupported'") ||
+    !appSource.includes('steerContinuation:true') ||
+    !appSource.includes('if(running)await this.showQueuedSubmission(running,false)')) {
+  throw new Error('Queued direction changes must distinguish immediate delivery, render the sent user message, and create a continuation response');
+}
 
 const app = { ...Object.assign({},...definition.mixins.map(m=>m.data()),...definition.mixins.map(m=>m.methods)),...definition.data(), ...definition.methods,$refs:{} };
 const codexOnly = {settings:{workerHarness:'codex',model:''},providers:[],agentRuntime:{selected:'codex'},selectedProvider:null};
@@ -77,7 +101,7 @@ if (!appSource.includes("id: '', preset: '', name: '', token: '', authStyle: 'au
     !html.includes('<option disabled value="">自动匹配 / 也可手选</option>')) {
   throw new Error('New API configuration must probe supported providers without depending on the displayed default');
 }
-if (!appSource.includes("current&&!current.started&&!this.messages.length&&!this.sessionRun(current.id)&&!hasQueued") ||
+if (!appSource.includes("current&&current.kind!=='image'&&!current.started&&!this.messages.length&&!this.sessionRun(current.id)&&!hasQueued") ||
     !html.includes('本地版固定使用 D:\\work\\Claude')) throw new Error('Empty-session reuse or Local fixed-workspace UI contract is missing');
 const actionBlock = html.match(/<div v-if="!message\.streaming&&\(canRegenerate\(message\)\|\|message\.variants\?\.length>1\)" class="message-actions">([\s\S]*?)<\/div>\s*<\/div>/)?.[1] || '';
 if (!actionBlock.includes('regenerateMessage') || actionBlock.includes('quoteMessage') || actionBlock.includes('deleteMessage')) {
@@ -87,6 +111,56 @@ if (!html.includes('exportContextSelection') || !html.includes('copyContextSelec
   throw new Error('Selection context menu is incomplete');
 }
 const css = fs.readFileSync(path.join(root, 'static', 'styles.css'), 'utf8');
+if (app.workflowKind('Bash') !== 'command' || app.workflowKind('Edit') !== 'edit' || app.workflowKind('Read') !== 'progress') {
+  throw new Error('Native tool events are not normalized into command/edit/progress activity levels');
+}
+const activityMessage={workflow:[{open:true},{open:true}],activity:{changes:{files:2,additions:7,deletions:3,unknownLineFiles:0}}};
+app.collapseWorkflow(activityMessage);
+if(activityMessage.workflow.some(item=>item.open)||app.activityChanges(activityMessage).files!==2){
+  throw new Error('Completed activity levels do not collapse or preserve authoritative change totals');
+}
+const toggleFlow={open:false};app.toggleWorkflow(toggleFlow);if(toggleFlow.open!==true){throw new Error('Workflow details must open on demand');}app.toggleWorkflow(toggleFlow);if(toggleFlow.open!==false){throw new Error('Workflow details must fold back on demand');}
+const processMessage={streaming:false,processOpen:false,workflow:[{kind:'narrative',open:false},{kind:'command',open:true},{kind:'edit',open:false}]};
+if(app.workflowProcessOpen(processMessage)!==false)throw new Error('Completed process must start folded');
+app.toggleWorkflowProcess(processMessage);if(!app.workflowProcessOpen(processMessage)||processMessage.workflow[1].open!==true)throw new Error('Whole-process disclosure must not overwrite nested tool disclosure state');
+app.toggleWorkflowProcess(processMessage);if(app.workflowProcessOpen(processMessage)!==false||processMessage.workflow[1].open!==true)throw new Error('Whole process must fold back independently from nested rows');
+if(app.workflowProcessMeta(processMessage)!=='1 段思考 · 1 条命令 · 1 次修改')throw new Error('Process summary must expose thought, command and edit counts');
+for(const [skin,mode,title] of [['claude','claude','Claude 执行过程'],['codex','codex','Codex 工作过程'],['fusion','compatible','Agent 执行过程']]){app.settings.skin=skin;if(app.workflowProcessMode()!==mode||app.workflowProcessTitle(processMessage)!==title)throw new Error(`${skin} process presentation is not distinct`);}
+const toggleEvidence={runEvidence:{open:false}};app.toggleRunEvidence(toggleEvidence);if(toggleEvidence.runEvidence.open!==true){throw new Error('Run evidence must open on demand');}app.toggleRunEvidence(toggleEvidence);if(toggleEvidence.runEvidence.open!==false){throw new Error('Run evidence must fold back on demand');}
+if(!html.includes('class="process-summary"')||!html.includes('@click="toggleWorkflowProcess(message)"')||!html.includes('v-show="workflowProcessOpen(message)"')||!html.includes('class="workflow-summary"')||!html.includes('@click="toggleWorkflow(flow)"')||!html.includes('v-show="flow.open===true"')||!html.includes('class="run-evidence-summary"')||!html.includes('@click="toggleRunEvidence(message)"')||!html.includes('v-show="message.runEvidence.open===true"'))throw new Error('Whole-process, nested output and evidence controls must use independent Vue state');
+const merged=app.normalizeTranscriptMessages([{role:'assistant',text:'第一段',workflow:[{id:'a',title:'思考过程',kind:'progress',detail:'第一段'},{id:'cmd-a',title:'Bash',rawName:'Bash',detail:'{"command":"echo a"}'}],usage:{input:1,output:2,total:3}},{role:'assistant',text:'第二段',workflow:[{id:'b',title:'思考过程',kind:'progress',detail:'第二段'}],usage:{input:4,output:5,total:9}},{role:'user',text:'下一问'}]);
+if(merged.length!==2||merged[0].text!=='第二段'||merged[0].workflow.length!==2||merged[0].workflow[0].kind!=='narrative'||merged[0].workflow[1].kind!=='command'||merged[0].usage.total!==9)throw new Error('Consecutive assistant turns must render an inline timeline before the final answer');
+const grouped=app.normalizeWorkflowItems([{kind:'command',title:'Bash',rawName:'Bash',detail:'a'},{kind:'command',title:'Bash',rawName:'Bash',detail:'b'}]);if(grouped.length!==2)throw new Error('Separate tool runs must remain separately expandable');
+const localCardPunctuation=app.renderMarkdown('打开 D:\\work\\Claude\\tetris.html。');if(/local-document-link[\s\S]*?<\/button>(?:<br>)*[。．.]/.test(localCardPunctuation))throw new Error('Local file cards must not leave orphan punctuation blocks');
+const localCardLinePunctuation=app.renderMarkdown('打开方式：双击 `tetris.html`，或执行 `start`\nD:\\work\\Claude\\tetris.html\n。');if(/<\/button>(?:<br>|&nbsp;|\s)*[。．.]/.test(localCardLinePunctuation))throw new Error('Local file cards must remove orphan punctuation on a following line');
+const localCardBlankLinePunctuation=app.renderMarkdown('D:\\work\\Claude\\tetris.html\r\n\r\n\u200b。\r\n');if(/<\/button>(?:<br>|&nbsp;|\s|\u200b)*[。．.]/.test(localCardBlankLinePunctuation))throw new Error('Local file cards must remove punctuation separated by blank or zero-width lines');
+const localCardCommandSentence=app.renderMarkdown('**文件**：`D:\\work\\Claude\\tetris.html`\n\n打开方式：双击 `tetris.html`，或命令行执行 `start D:\\work\\Claude\\tetris.html`。');
+if((localCardCommandSentence.match(/local-document-link/g)||[]).length!==1||!localCardCommandSentence.includes('<code class="inline-code">start D:\\work\\Claude\\tetris.html</code>。'))throw new Error('Absolute paths inside a larger inline command must stay inline instead of becoming a detached file card');
+if(!html.includes('workflow-narrative')||!html.includes('tool-output-card')||!html.includes('final-answer-label')||!css.includes('.tool-output-card')||!css.includes('.workflow-narrative')||!css.includes('[data-skin="claude"] .process-block')||!css.includes('[data-skin="codex"] .process-block')||!css.includes('.process-block>.activity-stack'))throw new Error('Mode-aware two-level process timeline and unified final answer are missing');
+if(!html.includes('openSessionMenu(session,$event)')||!html.includes("runSessionMenuAction('pin')")||!html.includes("runSessionMenuAction('rename')")||!html.includes("runSessionMenuAction('schedule')")||!html.includes("runSessionMenuAction('archive')"))throw new Error('Task context menu must expose pin, rename, schedule and archive actions');
+if(!appSource.includes("this.view='chat';this.inspector.open=false;this.pluginDetail=null;this.scheduleEditor.open=false")||
+   !appSource.includes('draftOnly:true')||
+   !appSource.includes('this.sessions.filter(session=>!session.draftOnly)')||
+   !appSource.includes('if(session.draftOnly){delete session.draftOnly;session.publishedAt='))throw new Error('New task must navigate immediately, preserve a single draft, stay out of the task list, and publish only on first submission');
+if(!css.includes('#app:not(.boot-ready){visibility:hidden}')||!appSource.includes('if(builtinSkin)this.revealBootFrame()')||
+   !appSource.includes("revealBootFrame(){if(this.bootReady)return;this.bootReady=true;document.getElementById('app')?.classList.add('boot-ready');document.documentElement.dataset.bootReady='true'"))throw new Error('The saved appearance must load before the first web UI frame while slow startup work continues afterward');
+if(!appSource.includes('/api/workbench/tasks/workspace')||!appSource.includes('workspaceRoot')||!appSource.includes('ensureTaskWorkspace(session,text)'))throw new Error('Per-task managed workspace creation is missing');
+if(!app.localFileMarkup('D:\\work\\Claude\\preview.png').includes('/api/files/preview?path='))throw new Error('Image file cards must render real previews');
+const commandFlow={kind:'command',detail:'请求参数\n{"command":"echo hello","description":"fixture"}\n\n执行输出\nhello'};if(app.workflowCommand(commandFlow)!=='echo hello'||!app.workflowPanelText(commandFlow).startsWith('$ echo hello'))throw new Error('Command cards must parse JSON input and render a modern shell command');
+const longNarrative={kind:'narrative',detail:'x'.repeat(1200),expanded:false};if(app.workflowNarrativeText(longNarrative).length>=1200)throw new Error('Long narrative sections must start compact');app.toggleWorkflowNarrative(longNarrative);if(app.workflowNarrativeText(longNarrative).length!==1200)throw new Error('Long narrative sections must be independently reversible');
+app.streamMessage={text:'先检查事件，再修改文件。',workflow:[]};app.streamTextBuffer='';app.streamFlushHandle=0;
+app.captureProgressStep();
+if(app.streamMessage.text!==''||app.streamMessage.workflow.length!==1||app.streamMessage.workflow[0].kind!=='narrative'||app.streamMessage.workflow[0].detail!=='先检查事件，再修改文件。'){
+  throw new Error('Interim explanatory output must move into the visible chronological narrative timeline');
+}
+if (!html.includes('activity-stack') || !html.includes('activity-change-summary') || !html.includes('change.lineStatsKnown') ||
+    !css.includes('.activity-stack.running .workflow.is-open')) {
+  throw new Error('Hierarchical task activity or per-file line evidence UI is missing');
+}
+const activityPlannerSource=fs.readFileSync(path.join(root,'native','ContextBudgetPlanner.cs'),'utf8');
+if(!activityPlannerSource.includes('WorkbenchActivityContract')||!activityPlannerSource.includes('不要用正文伪造命令、文件改动或统计')){
+  throw new Error('Non-native agent formatting contract is missing its host-evidence boundary');
+}
 if (!css.includes('--option-surface:#17243a') || !css.includes('html[data-edition="local"][data-skin="claude"]{--option-surface:#2b211e') || !css.includes('.settings-content :is(.capability-card') || !appSource.includes("dataset.edition=this.isOpenSource?'opensource':'local'")) {
   throw new Error('Settings option surfaces are not consistently blue with a Claude-only brown override');
 }
@@ -155,6 +229,7 @@ if (failedMessage.variantState !== 'failed' || failedMessage.runId !== 'run-fail
 }
 
 const apiServer = fs.readFileSync(path.join(root, 'native', 'ApiServer.cs'), 'utf8');
+if(!apiServer.includes('ServeIndex(context.Response)')||!apiServer.includes('WindowsPrefersLightTheme()')||!apiServer.includes('data-theme=\\"'))throw new Error('Saved theme must be injected before first paint');
 const permissionBroker = fs.readFileSync(path.join(root, 'native', 'PermissionBroker.cs'), 'utf8');
 const eventStore = fs.readFileSync(path.join(root, 'native', 'AgentEventStore.cs'), 'utf8');
 if (!apiServer.includes('/api/workbench/activity') || !apiServer.includes('WaitForActivity') ||
@@ -181,6 +256,14 @@ if (!apiServer.includes('session_has_background_work') || !appSource.includes('�
   throw new Error('Archived/deleted sessions are not protected from orphaned background work');
 }
 const nativeHost = fs.readFileSync(path.join(root, 'native', 'NativeHost.cs'), 'utf8');
+const nativeProgram = fs.readFileSync(path.join(root, 'native', 'Program.cs'), 'utf8');
+if(!nativeProgram.includes('ProbeHostConnection(connection)')||!nativeProgram.includes('connection.Url + "api/bootstrap"')||nativeHost.includes('正在启动工作台')||
+   !nativeHost.includes('LoadStartupSnapshot()')||!nativeHost.includes('ui-startup-snapshot.png')||
+   !nativeHost.includes('CapturePreviewAsync')||!nativeHost.includes('WaitForInterfaceReadyAsync(next)')||
+   !nativeHost.includes("document.documentElement.dataset.interfaceReady === 'true'")||
+   !appSource.includes("dataset.interfaceReady='true'")||!nativeHost.includes('HideStartupSnapshot()'))throw new Error('Native startup must keep a real previous-frame screenshot above hidden Host/Vue startup and swap only after full hydration');
+if(nativeHost.includes('CrashLog.Info("FormClosing reason=" + e.CloseReason + " allowExit=" + _allowExit);\n            if (_server == null) return;')||!nativeHost.includes('e.Cancel = true;')||!nativeProgram.includes('ShowWindow(handle, SW_SHOW)')||
+   !nativeHost.includes('TerminateDetachedUi();'))throw new Error('Closing to tray must preserve the UI/WebView process, while full exit and updates must terminate the detached UI');
 if (!nativeHost.includes('ShowForegroundDialog(CommonDialog dialog)') || !nativeHost.includes('TopMost = true') ||
     nativeHost.includes('dialog.ShowDialog(this) == DialogResult.OK')) {
   throw new Error('Native file/folder dialogs are not forced in front of their Workbench owner');
@@ -233,6 +316,16 @@ if (!apiServer.includes('supported_parameters') || !apiServer.includes('FirstPos
   throw new Error('Endpoint-backed model capability evidence contract is incomplete');
 }
 const workbenchApi = fs.readFileSync(path.join(root, 'native', 'WorkbenchApi.cs'), 'utf8');
+const nativeWorkerSupervisor = fs.readFileSync(path.join(root, 'native', 'NativeWorkerSupervisor.cs'), 'utf8');
+if (!appSource.includes('else if(!current.includes(terminalText))') || !appSource.includes("kind:'narrative'") || !appSource.includes("message.text='';")) throw new Error('Interim narrative extraction must preserve the terminal assistant result');
+if (!workbenchApi.includes('/api/workbench/extensions/curated-descriptions') || !workbenchApi.includes('CuratedDescriptionsAsync') || !appSource.includes('refreshCuratedDescriptions') || !appSource.includes('loadCachedCuratedDescriptions') || !html.includes('刷新描述') || !html.includes('展开全部') || !fs.existsSync(path.join(root, 'sync_local_version.ps1'))) { throw new Error('Curated remote description refresh, fallback, expansion, or local version retention contract is incomplete'); }
+if (!workbenchApi.includes('/api/workbench/extensions/dsh-download') || !workbenchApi.includes('/api/workbench/extensions/dsh-adapt-report') || !workbenchApi.includes('BuildDshGeneralAdapterReport') || !workbenchApi.includes('auto-adaptable') || !workbenchApi.includes('conversation-required') || !workbenchApi.includes('unsupported') || !workbenchApi.includes('DownloadDshPackageAsync') ||
+    !workbenchApi.includes('registry.npmjs.org') || !workbenchApi.includes('FixedTimeEquals(expected, sha.ComputeHash(archive))') ||
+    !workbenchApi.includes('dsh-staging') || !workbenchApi.includes('BuildDshBashDownloadCommand') || !workbenchApi.includes('RunDshBashDownloadAsync') || !workbenchApi.includes('compatibleHarnesses') ||
+    !appSource.includes('async downloadDshPackage()') || !appSource.includes('async startDshAdaptation()') ||
+    !appSource.includes('不要执行安装脚本、插件代码或包内命令') || !appSource.includes('转换为共享 Skill、MCP 库或插件') || !appSource.includes('unsupported') || !html.includes('Bash 拉取并暂存为 DSHarness 专属') || !html.includes('通过对话转换为共享资产')) {
+  throw new Error('Verified DSHarness package staging, Bash download, or conversation adaptation contract is incomplete');
+}
 const taskWorkspaceManager = fs.readFileSync(path.join(root, 'native', 'TaskWorkspaceManager.cs'), 'utf8');
 const conPtyTerminal = fs.readFileSync(path.join(root, 'native', 'ConPtyTerminal.cs'), 'utf8');
 const nativeUpdater = fs.readFileSync(path.join(root, 'native', 'NativeUpdater.cs'), 'utf8');

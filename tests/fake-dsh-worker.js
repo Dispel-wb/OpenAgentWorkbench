@@ -10,7 +10,8 @@ readline.createInterface({input:process.stdin}).on('line', line => {
     if(req.params.model==='fixture-byte-flood') { for(let i=0;i<24;i++)frames({method:'fixture',params:{text:'中'.repeat(1024*1024)}});return; }
     if(req.params.model==='fixture-malformed') { process.stdout.write('{invalid json}\n');return; }
     if(req.params.model==='fixture-eof') { process.exit(0);return; }
-    if(process.env.DSH_TELEMETRY_DISABLED!=='1'||process.env.DSH_PERMISSION_MODE!=='read-only') throw new Error('Unsafe launch environment');
+    const expectedPermission=req.params.model==='fixture-agent'?'danger-full-access':'read-only';
+    if(process.env.DSH_TELEMETRY_DISABLED!=='1'||process.env.DSH_PERMISSION_MODE!==expectedPermission) throw new Error('Unsafe launch environment: expected '+expectedPermission+' but received '+process.env.DSH_PERMISSION_MODE);
     initialized=true; reply({serverInfo:{name:'deepseek-harness-sdk-runtime',version:'fixture'}}); return;
   }
   if(req.method==='shutdown'){reply({});process.exitCode=0;process.stdin.destroy();return;}

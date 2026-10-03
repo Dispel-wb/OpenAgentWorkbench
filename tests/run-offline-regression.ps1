@@ -1,10 +1,12 @@
 param(
     [Parameter(Mandatory=$true)][string]$Executable,
     [Parameter(Mandatory=$true)][string]$OutputDirectory,
-    [string]$DependencyRoot=(Join-Path $PSScriptRoot '..\.packages'),
+    [string]$DependencyRoot='',
+    [ValidateSet('local','opensource')][string]$ExpectedEdition='local',
     [ValidateRange(30,1800)][int]$TestTimeoutSeconds=300
 )
 $ErrorActionPreference='Stop'
+$DependencyRoot=if($DependencyRoot){$DependencyRoot}else{Join-Path $PSScriptRoot '..\.packages'}
 $Executable=(Resolve-Path -LiteralPath $Executable).Path
 $DependencyRoot=(Resolve-Path -LiteralPath $DependencyRoot).Path
 $source=(Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
@@ -38,7 +40,7 @@ foreach($name in $hostTests){
     $hostArguments=if($name-eq'native-agent-fault-stress'){@('-ObserverDelayMilliseconds','500')}else{@()}
     Add-Case $name "$name.ps1" $hostArguments
 }
-foreach($name in @('product-gaps-selftest','webview-runtime-selftest','sdk-frame-reader-selftest')){Add-Case $name "$name.ps1" @('-DependencyRoot',$DependencyRoot) $false}
+foreach($name in @('product-gaps-selftest','webview-runtime-selftest','sdk-frame-reader-selftest','durable-process-identity-selftest')){Add-Case $name "$name.ps1" @('-DependencyRoot',$DependencyRoot) $false}
 foreach($name in @('release-ci-gate-selftest','release-signature-policy-selftest','v1-readiness-selftest')){Add-Case $name "$name.ps1" @() $false}
 Add-Case 'agent-worker-sdk-integration' 'agent-worker-sdk-integration.ps1' @('-DependencyRoot',$DependencyRoot)
 Add-Case 'terminal-poll-race-selftest' 'terminal-poll-race-selftest.ps1'
@@ -47,7 +49,7 @@ Add-Case 'pi-host-resource-stability' 'pi-host-integration.ps1' @(
     '-PiEntry',(Join-Path $source 'runtimes/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js'),
     '-CycleLimit','60','-ResourceWarmupCycles','20','-MaxHandleGrowth','1000','-MaxPostWarmupHandleGrowth','100'
 )
-Add-Case 'edition-smoke' 'edition-smoke.ps1' @('-ExpectedEdition','opensource','-NodePath',$node)
+Add-Case 'edition-smoke' 'edition-smoke.ps1' @('-ExpectedEdition',$ExpectedEdition,'-NodePath',$node)
 foreach($fault in @('','oversize','flood','byte-flood','malformed','eof')){
     $argsForCase=@('-NodePath',$node)
     if($fault){$argsForCase+=@('-Fault',$fault)}

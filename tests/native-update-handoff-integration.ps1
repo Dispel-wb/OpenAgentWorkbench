@@ -58,11 +58,12 @@ Copy-Item -LiteralPath $json -Destination (Join-Path $root 'Newtonsoft.Json.dll'
 
 $targetRoot = Join-Path $root 'install'
 $exeName = [IO.Path]::GetFileName($Executable)
+$stableExeName = if ($exeName -like 'OpenAgentWorkbench*') { 'OpenAgentWorkbench.exe' } else { 'ClaudeCodeWorkbench.exe' }
 $previousName = [IO.Path]::GetFileNameWithoutExtension($Executable) + '.previous.exe'
 $target = Join-Path $targetRoot $exeName
 $data = Join-Path $root '.claude-gui-v2'
 $stageRoot = Join-Path $data 'updates\6-4-5-test'
-$staged = Join-Path $stageRoot $exeName
+$staged = Join-Path $stageRoot $stableExeName
 [IO.Directory]::CreateDirectory($targetRoot) | Out-Null
 [IO.Directory]::CreateDirectory($stageRoot) | Out-Null
 Copy-Item -LiteralPath $Executable -Destination $target
@@ -143,7 +144,7 @@ try {
     $rbTarget = Join-Path $rbTargetRoot $exeName
     $rbData = Join-Path $rollbackRoot '.claude-gui-v2'
     $rbStageRoot = Join-Path $rbData 'updates\6-4-5-test'
-    $rbStaged = Join-Path $rbStageRoot $exeName
+    $rbStaged = Join-Path $rbStageRoot $stableExeName
     [IO.Directory]::CreateDirectory($rbTargetRoot) | Out-Null
     [IO.Directory]::CreateDirectory($rbStageRoot) | Out-Null
     Copy-Item -LiteralPath $Executable -Destination $rbTarget
