@@ -12,14 +12,17 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 function Test-Python([string]$Candidate) {
     if (-not $Candidate -or -not (Test-Path -LiteralPath $Candidate -PathType Leaf)) { return $false }
-    try { & $Candidate -c 'import sys; raise SystemExit(0)' *> $null; return $LASTEXITCODE -eq 0 } catch { return $false }
+    try {
+        & $Candidate -c "from PIL import __version__; raise SystemExit(0 if __version__ == '12.3.0' else 1)" *> $null
+        return $LASTEXITCODE -eq 0
+    } catch { return $false }
 }
 if ($PythonPath) {
     $python = [IO.Path]::GetFullPath($PythonPath)
-    if (-not (Test-Python $python)) { throw "Configured Python is not runnable: $python" }
+    if (-not (Test-Python $python)) { throw "Configured Python must be runnable and provide Pillow 12.3.0: $python" }
 } else {
     $python = @((Join-Path $root '.venv\Scripts\python.exe'), (Get-Command python -ErrorAction SilentlyContinue).Source) | Where-Object { Test-Python $_ } | Select-Object -First 1
-    if (-not $python) { throw 'No runnable Python interpreter was found. Pass -PythonPath.' }
+    if (-not $python) { throw 'No runnable Python interpreter with Pillow 12.3.0 was found. Pass -PythonPath.' }
 }
 $isOpenSource = $Edition -eq 'OpenSource'
 $build = Join-Path $root 'build'
@@ -125,6 +128,5 @@ if ($SyncInstalled -and -not $isOpenSource) {
     & $sync -Executable $output
     if ($LASTEXITCODE -ne 0) { throw "Local version synchronization failed: $LASTEXITCODE" }
 }
-
 
 
