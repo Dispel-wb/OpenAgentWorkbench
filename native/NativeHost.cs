@@ -606,6 +606,15 @@ namespace ClaudeCodeWorkbench
                     {
                         var connection = _hostConnection;
                         if (connection == null || !e.Request.Uri.StartsWith(connection.Url + "api/", StringComparison.OrdinalIgnoreCase)) return;
+                        var origin = RequestHeader(e.Request.Headers, "Origin");
+                        var referer = RequestHeader(e.Request.Headers, "Referer");
+                        var secFetchSite = RequestHeader(e.Request.Headers, "Sec-Fetch-Site");
+                        if (!WebViewApiRequestPolicy.IsTrusted(connection.Url, origin, referer, secFetchSite))
+                        {
+                            e.Request.Headers.RemoveHeader("X-Desktop-Secret");
+                            e.Request.Headers.RemoveHeader("X-Workbench-Protocol");
+                            return;
+                        }
                         e.Request.Headers.SetHeader("X-Desktop-Secret", connection.Secret);
                         e.Request.Headers.SetHeader("X-Workbench-Protocol", connection.ProtocolVersion.ToString());
                     };
@@ -873,6 +882,12 @@ namespace ClaudeCodeWorkbench
             _recoveryPanel = null;
             _recoveryTitle = null;
             _recoveryMessage = null;
+        }
+
+        private static string RequestHeader(CoreWebView2HttpRequestHeaders headers, string name)
+        {
+            try { return headers.GetHeader(name) ?? ""; }
+            catch { return ""; }
         }
 
         protected override void Dispose(bool disposing)

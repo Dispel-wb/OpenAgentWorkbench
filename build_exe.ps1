@@ -125,8 +125,6 @@ Write-Host "Edition: $Edition"
 if ($SyncInstalled -and -not $isOpenSource) {
     $sync = Join-Path $root 'sync_local_version.ps1'
     if (-not (Test-Path -LiteralPath $sync)) { throw 'sync_local_version.ps1 is missing' }
-    & $sync -Executable $output
+    & $sync -Executable $output -WorkspaceRoot $root
     if ($LASTEXITCODE -ne 0) { throw "Local version synchronization failed: $LASTEXITCODE" }
 }
-
-

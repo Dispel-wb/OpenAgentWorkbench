@@ -141,12 +141,16 @@ const proxySource = `() => {
     await commandSummary.click();
     if ((await commandSummary.getAttribute('aria-expanded')) !== 'false') throw new Error('Command block did not close');
     const narrativeToggle = page.locator('.workflow-narrative button');
+    const narrativeBody = page.locator('.workflow-narrative .markdown-body');
+    if ((await narrativeBody.getAttribute('aria-hidden')) !== 'true') throw new Error('Collapsed long narrative must stay out of the screen-reader live region');
     await narrativeToggle.click();
     if ((await narrativeToggle.getAttribute('aria-expanded')) !== 'true') throw new Error('Narrative accessibility state did not expand');
+    if ((await narrativeBody.getAttribute('aria-hidden')) !== 'false') throw new Error('Expanded narrative must be exposed to screen readers');
     if ((await narrativeToggle.innerText()).trim() !== '收起本段') throw new Error('Narrative did not expand');
     await narrativeToggle.click();
     if ((await narrativeToggle.innerText()).trim() !== '展开本段') throw new Error('Narrative did not collapse');
     if ((await narrativeToggle.getAttribute('aria-expanded')) !== 'false') throw new Error('Narrative accessibility state did not collapse');
+    if ((await narrativeBody.getAttribute('aria-hidden')) !== 'true') throw new Error('Re-collapsed narrative must leave the screen-reader live region');
 
     const markdown = page.locator('.final-answer-body');
     for (const selector of ['table', 'code', 'blockquote', 'pre']) if (!(await markdown.locator(selector).count())) throw new Error(`Markdown renderer missed ${selector}`);

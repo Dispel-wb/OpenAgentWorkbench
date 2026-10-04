@@ -42,6 +42,7 @@ foreach($name in $hostTests){
 }
 foreach($name in @('product-gaps-selftest','webview-runtime-selftest','sdk-frame-reader-selftest','durable-process-identity-selftest')){Add-Case $name "$name.ps1" @('-DependencyRoot',$DependencyRoot) $false}
 foreach($name in @('release-ci-gate-selftest','release-signature-policy-selftest','v1-readiness-selftest')){Add-Case $name "$name.ps1" @() $false}
+Add-Case 'webview-api-request-policy-selftest' 'webview-api-request-policy-selftest.ps1' @() $false
 Add-Case 'agent-worker-sdk-integration' 'agent-worker-sdk-integration.ps1' @('-DependencyRoot',$DependencyRoot)
 Add-Case 'terminal-poll-race-selftest' 'terminal-poll-race-selftest.ps1'
 Add-Case 'pi-host-integration' 'pi-host-integration.ps1' @('-PiEntry',(Join-Path $source 'runtimes/pi/node_modules/@earendil-works/pi-coding-agent/dist/bundle/cli.js'))
