@@ -1,10 +1,10 @@
 # Windows 验证矩阵
 
-已建立可执行测试入口；有测试脚本不等于每种机器均已验收。当前本机通过 Windows 11 build 26200 / Evergreen / x64，包含新数据启动、中文与空格路径、升级/卸载夹具、数据迁移及无 Claude 依赖的假核心测试。
+已建立可执行测试入口；有测试脚本不等于每种机器均已验收。1.0.0 候选已在当前 Windows 11 build 26300 / Evergreen / x64 上分别通过 Windows PowerShell 5.1 与 PowerShell 7，覆盖新数据启动、SQLite 完整性、中文与空格路径、非 D 盘和离线 API。测试路径使用编码无关的 Unicode 构造，避免无 BOM 脚本在 Windows PowerShell 5.1 中被 ANSI 代码页误解。
 
 | 场景 | 验证方法 | 当前证据边界 |
 | --- | --- | --- |
-| Windows 10 / 11 | 校验实际 OS build | Win11 本机通过；干净 Win10 待运行 |
+| Windows 10 / 11 | 校验实际 OS build | Win11 当前主机通过；干净 Win10 与干净 Win11 待运行 |
 | Evergreen / Fixed WebView2 | 启动实际 UI，记录 Runtime | Evergreen 通过；不同 Fixed 版本待运行 |
 | 无 Claude 安装 | RequireClaudeAbsent + CLI 核心测试 | 假核心独立启动通过；干净无 Claude 机器待验收 |
 | 非 D 盘、中文空格路径 | 在 C 盘临时目录复制安装/工作区 | 本机路径通过；物理无 D 盘默认回退待实机验证 |

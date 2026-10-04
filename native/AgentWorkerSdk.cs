@@ -303,14 +303,14 @@ namespace ClaudeCodeWorkbench
         private static JObject PiDiagnostics(bool probe)
         {
             var entry = FindPiEntry(); var node = FindNodeExecutable();
-            var result = new JObject { ["available"] = false, ["path"] = entry, ["node"] = node, ["testedVersion"] = "0.85.1" };
+            var result = new JObject { ["available"] = false, ["path"] = entry, ["node"] = node, ["testedVersion"] = "1.0.1" };
             try
             {
                 if (entry.Length == 0 || node.Length == 0) throw new InvalidOperationException("未找到 Pi 运行时或 Node.js，请设置 Pi CLI 入口路径。");
                 var manifest = JsonUtil.Read(Path.GetFullPath(Path.Combine(Path.GetDirectoryName(entry), "..", "..", "package.json")), new JObject()) as JObject;
                 result["version"] = manifest?["version"];
-                if ((string)manifest?["name"] != "@earendil-works/pi-coding-agent" || (string)manifest?["version"] != "0.85.1")
-                    throw new InvalidOperationException("Pi 适配器要求已验证的 @earendil-works/pi-coding-agent 0.85.1（agent_settled 协议）。");
+                if ((string)manifest?["name"] != "@earendil-works/pi-coding-agent" || (string)manifest?["version"] != "1.0.1")
+                    throw new InvalidOperationException("Pi 适配器要求已验证的 @earendil-works/pi-coding-agent 1.0.1（agent_settled 协议与已修复依赖）。");
                 result["available"] = true;
                 if (probe)
                 {

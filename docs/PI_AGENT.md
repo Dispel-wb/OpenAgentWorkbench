@@ -1,6 +1,6 @@
 # Pi Coding Agent adapter
 
-The workbench supports the genuine `@earendil-works/pi-coding-agent` **0.85.1** through its native RPC mode. This is an optional runtime, not a reimplementation of Pi. Other versions fail validation because completion depends on the `agent_settled` contract.
+The workbench supports the genuine `@earendil-works/pi-coding-agent` **1.0.1** through its native RPC mode. This is an optional runtime, not a reimplementation of Pi. Other versions fail validation because completion depends on the `agent_settled` contract and the locked runtime must retain the audited dependency versions.
 
 ## Setup
 

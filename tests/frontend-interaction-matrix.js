@@ -128,21 +128,25 @@ const proxySource = `() => {
     }, proxySource);
     const processSummary = page.locator('.process-summary');
     await processSummary.waitFor();
+    if (!(await processSummary.getAttribute('aria-controls'))) throw new Error('Process disclosure is not associated with its panel');
     await processSummary.click();
     if ((await processSummary.getAttribute('aria-expanded')) !== 'false') throw new Error('Whole process did not collapse');
     if (!(await page.locator('.final-answer-body').isVisible())) throw new Error('Final answer disappeared with the process');
     await processSummary.click();
     if ((await processSummary.getAttribute('aria-expanded')) !== 'true') throw new Error('Whole process did not reopen');
     const commandSummary = page.locator('.workflow-summary');
+    if (!(await commandSummary.getAttribute('aria-controls'))) throw new Error('Command disclosure is not associated with its panel');
     await commandSummary.click();
     if ((await commandSummary.getAttribute('aria-expanded')) !== 'true') throw new Error('Command block did not open');
     await commandSummary.click();
     if ((await commandSummary.getAttribute('aria-expanded')) !== 'false') throw new Error('Command block did not close');
     const narrativeToggle = page.locator('.workflow-narrative button');
     await narrativeToggle.click();
+    if ((await narrativeToggle.getAttribute('aria-expanded')) !== 'true') throw new Error('Narrative accessibility state did not expand');
     if ((await narrativeToggle.innerText()).trim() !== '收起本段') throw new Error('Narrative did not expand');
     await narrativeToggle.click();
     if ((await narrativeToggle.innerText()).trim() !== '展开本段') throw new Error('Narrative did not collapse');
+    if ((await narrativeToggle.getAttribute('aria-expanded')) !== 'false') throw new Error('Narrative accessibility state did not collapse');
 
     const markdown = page.locator('.final-answer-body');
     for (const selector of ['table', 'code', 'blockquote', 'pre']) if (!(await markdown.locator(selector).count())) throw new Error(`Markdown renderer missed ${selector}`);

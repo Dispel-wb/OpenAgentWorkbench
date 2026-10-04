@@ -125,3 +125,6 @@ if ($SyncInstalled -and -not $isOpenSource) {
     & $sync -Executable $output
     if ($LASTEXITCODE -ne 0) { throw "Local version synchronization failed: $LASTEXITCODE" }
 }
+
+
+

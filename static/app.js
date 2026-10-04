@@ -835,3 +835,13 @@ const workbenchApp=createApp({
 workbenchApp.config.errorHandler=(error,instance)=>{console.error(error);if(instance)instance.status=`界面操作失败：${error?.message||error}`;};
 window.addEventListener('unhandledrejection',event=>{console.error(event.reason);const root=document.querySelector('#app');if(root)root.dataset.lastError=String(event.reason?.message||event.reason||'unknown');});
 workbenchApp.mount('#app');
+
+
+
+
+
+
+
+
+
+

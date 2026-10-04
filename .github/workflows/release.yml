@@ -54,6 +54,8 @@ jobs:
           .\build_exe.ps1 -Edition OpenSource -DependencyRoot .\.packages -PythonPath $python -OutputPath .\dist\release\OpenAgentWorkbench.exe
           .\tests\reproducible-build.ps1 -Edition OpenSource -DependencyRoot .\.packages -PythonPath $python -ReportPath .\dist\release\reproducible-build.json
           .\tests\edition-smoke.ps1 -Executable .\dist\release\OpenAgentWorkbench.exe -ExpectedEdition opensource -NodePath $node
+          npm audit --omit=dev --audit-level=high --prefix .\runtimes\pi
+          npm audit --omit=dev --audit-level=high --prefix .\runtimes\dsh
           .\tests\release-security-audit.ps1 -Root . -Executable .\dist\release\OpenAgentWorkbench.exe -ReportPath .\dist\release\security-audit.json
       - name: Require stable release evidence for the exact binary
         shell: pwsh

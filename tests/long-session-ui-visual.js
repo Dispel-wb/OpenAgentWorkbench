@@ -128,9 +128,11 @@ async function main() {
     if((await page.evaluate(()=>getSelection().toString()))!==selected)throw new Error('Selection lost after keyboard menu');
     const ax=await cdp.send('Accessibility.getFullAXTree');
     const accessibleRoles=ax.nodes.filter(n=>!n.ignored).map(n=>({role:n.role?.value,name:n.name?.value}));
-    if(!accessibleRoles.some(n=>n.role==='region'&&n.name==='对话记录')||!accessibleRoles.some(n=>n.role==='textbox'&&n.name?.startsWith('任务输入')))throw new Error('Accessible conversation/composer missing');
+    if(!accessibleRoles.some(n=>n.role==='log'&&n.name==='对话记录')||!accessibleRoles.some(n=>n.role==='textbox'&&n.name?.startsWith('任务输入')))throw new Error('Accessible live conversation/composer missing');
+    const conversationAccessibility=await page.locator('.conversation').evaluate(node=>({role:node.getAttribute('role'),live:node.getAttribute('aria-live'),relevant:node.getAttribute('aria-relevant'),busy:node.getAttribute('aria-busy')}));
+    if(conversationAccessibility.role!=='log'||conversationAccessibility.live!=='polite'||conversationAccessibility.relevant!=='additions')throw new Error('Conversation live-region contract missing');
     const memoryAfter=await metric();
-    const benchmark={dataset:'synthetic-not-real-conversation',environment:'headless Chrome; not native WebView2/GPU certification',characters:messages.reduce((sum,m)=>sum+m.text.length,0),fullRenderedCharacters,...frames,jsHeapBefore:memoryBefore.JSHeapUsedSize,jsHeapAfter:memoryAfter.JSHeapUsedSize,nodes:memoryAfter.Nodes,selectionPreserved:true,keyboardMenu:true,accessibilityTree:true,screenReaderSpeech:'not-manually-verified'};
+    const benchmark={dataset:'synthetic-not-real-conversation',environment:'headless Chrome; not native WebView2/GPU certification',characters:messages.reduce((sum,m)=>sum+m.text.length,0),fullRenderedCharacters,...frames,jsHeapBefore:memoryBefore.JSHeapUsedSize,jsHeapAfter:memoryAfter.JSHeapUsedSize,nodes:memoryAfter.Nodes,selectionPreserved:true,keyboardMenu:true,accessibilityTree:true,conversationAccessibility,screenReaderSpeech:'not-manually-verified'};
     if(frames.fps<20||memoryAfter.JSHeapUsedSize>256*1024*1024||pageErrors.length)throw new Error('Performance/error budget exceeded: '+JSON.stringify({...benchmark,pageErrors}));
     fs.writeFileSync(path.join(outputDir,'long-session-benchmark.json'),JSON.stringify(benchmark,null,2));
     process.stdout.write(JSON.stringify({ longSessionUi: 'PASS', totalMessages: messages.length, initialRenderMs, expandMs, benchmark, initial, shifted, selectionActions }, null, 2));

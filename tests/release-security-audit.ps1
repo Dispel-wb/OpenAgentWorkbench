@@ -9,7 +9,8 @@ $report = if ($ReportPath) { [IO.Path]::GetFullPath($ReportPath) } else { Join-P
 $failures = [Collections.Generic.List[string]]::new()
 $warnings = [Collections.Generic.List[string]]::new()
 $files = @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File | Where-Object {
-    $_.FullName -notmatch '[\\/](\.git|\.packages|\.worker-runtimes|node_modules|dist|build|frontend-build|\.venv)[\\/]'
+    $_.FullName -ne $report -and
+    $_.FullName -notmatch '[\\/](\.git|\.packages|\.worker-runtimes|node_modules|dist|build|frontend-build|audit-results|\.venv)[\\/]'
 })
 
 $forbiddenFiles = @('.env','.env.local','id_rsa','id_ed25519','settings.json','runtime-state.json','events.db','events.db-wal')

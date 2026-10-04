@@ -2,6 +2,9 @@
 
 ## 1.0.0 — 2026-10-03
 
+- Updated the optional Pi runtime to 1.0.1, preserving the verified `agent_settled` RPC contract while removing known high-severity transitive dependency alerts.
+- Added live-region and disclosure semantics for screen readers, a two-reader manual certification checklist, and an external security-review scope. These improvements require certification evidence tied to the new EXE hash.
+- Made the clean-Windows matrix compatible with both Windows PowerShell 5.1 and PowerShell 7 when exercising Unicode paths.
 - Completed the frozen four-kernel 72-hour validation: 259,211 active seconds, 831 successful cycles each for Claude, Codex, DSHarness and Pi, zero failures, zero suspension gaps, and matching hashes for every frozen input at completion.
 - Promoted the Open Source edition and public documentation from Preview to v1.0.0. The Windows executable remains unsigned; clean-machine and third-party cloud-provider coverage remain documented limitations.
 

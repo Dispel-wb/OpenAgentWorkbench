@@ -15,7 +15,7 @@ async function main() {
     await core.selectOption('pi');
     await page.getByPlaceholder('@earendil-works/pi-coding-agent/dist/bundle/cli.js 的绝对路径').waitFor();
     const diagnostic = await context.request.get(process.env.CLAUDE_UI_BASE_URL + '/api/workbench/runtime/agents?probe=1');
-    const info = await diagnostic.json(); assert.equal(info.selected, 'pi'); assert.equal(info.available, true); assert.equal(info.pi.version, '0.85.1');
+    const info = await diagnostic.json(); assert.equal(info.selected, 'pi'); assert.equal(info.available, true); assert.equal(info.pi.version, '1.0.1');
     await page.reload();
     await page.locator('button[title="API 设置与归档聊天"]').click();
     await page.locator('.settings-nav button').filter({ hasText: '工作区' }).click();

@@ -34,6 +34,11 @@ jobs:
       - name: Restore locked Pi runtime
         shell: pwsh
         run: .\install_pi_runtime.ps1
+      - name: Reject vulnerable runtime dependency locks
+        shell: pwsh
+        run: |
+          npm audit --omit=dev --audit-level=high --prefix .\runtimes\pi
+          npm audit --omit=dev --audit-level=high --prefix .\runtimes\dsh
       - name: Verify reproducible build
         shell: pwsh
         run: |
@@ -82,7 +87,10 @@ jobs:
         run: ./tests/run-offline-regression.ps1 -Executable ./dist/ci/OpenAgentWorkbench.exe -OutputDirectory ./dist/ci/offline-regression -DependencyRoot ./.packages -ExpectedEdition opensource
       - name: Security release gate
         shell: pwsh
-        run: .\tests\release-security-audit.ps1 -Root . -Executable .\dist\ci\OpenAgentWorkbench.exe -ReportPath .\dist\ci\security-audit.json
+        run: |
+          npm audit --omit=dev --audit-level=high --prefix .\runtimes\pi
+          npm audit --omit=dev --audit-level=high --prefix .\runtimes\dsh
+          .\tests\release-security-audit.ps1 -Root . -Executable .\dist\ci\OpenAgentWorkbench.exe -ReportPath .\dist\ci\security-audit.json
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:

@@ -15,5 +15,5 @@ if([IO.Path]::GetFullPath($source) -ne [IO.Path]::GetFullPath($target)){
 if($LASTEXITCODE -ne 0){throw 'Locked Pi runtime installation failed.'}
 $entry=Join-Path $target 'node_modules\@earendil-works\pi-coding-agent\dist\bundle\cli.js'
 $coreVersion=& $node $entry --version
-if($LASTEXITCODE -ne 0 -or $coreVersion -ne '0.85.1'){throw "Unexpected or broken Pi runtime: $coreVersion"}
+if($LASTEXITCODE -ne 0 -or $coreVersion -ne '1.0.1'){throw "Unexpected or broken Pi runtime: $coreVersion"}
 [pscustomobject]@{Core='Pi Coding Agent';Version=$coreVersion;Entry=$entry;Node=$node;PaidApiCalls=0}|Format-List

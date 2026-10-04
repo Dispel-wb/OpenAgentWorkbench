@@ -62,9 +62,15 @@ if ($ExpectedPrivilege -eq 'admin' -and -not $osEvidence.elevated) { throw 'This
 if ($ExpectedPrivilege -eq 'non-admin' -and $osEvidence.elevated) { throw 'This matrix row requires a non-administrator account.' }
 if ($RequireUnicodeUserProfile -and $osEvidence.userProfile -notmatch '[^\x00-\x7F]') { throw 'This matrix row requires a non-ASCII user profile path.' }
 
-$testRoot = Join-Path ([IO.Path]::GetTempPath()) ('Open Agent Matrix 中文 路径 ' + [guid]::NewGuid().ToString('N'))
-$installRoot = Join-Path $testRoot '应用 安装 空格路径'
-$workspace = Join-Path $testRoot '工作区 空格路径'
+# Keep this script Windows PowerShell 5.1 compatible. Public release files are
+# UTF-8 without a BOM, so non-ASCII source literals would be decoded using the
+# active ANSI code page by powershell.exe and could become invalid path chars.
+$zhMarker = "$([char]0x4E2D)$([char]0x6587) $([char]0x8DEF)$([char]0x5F84)"
+$installSegment = "$([char]0x5E94)$([char]0x7528) $([char]0x5B89)$([char]0x88C5) $([char]0x7A7A)$([char]0x683C)$([char]0x8DEF)$([char]0x5F84)"
+$workspaceSegment = "$([char]0x5DE5)$([char]0x4F5C)$([char]0x533A) $([char]0x7A7A)$([char]0x683C)$([char]0x8DEF)$([char]0x5F84)"
+$testRoot = [IO.Path]::GetFullPath((Join-Path ([IO.Path]::GetTempPath()) ("Open Agent Matrix $zhMarker " + [guid]::NewGuid().ToString('N'))))
+$installRoot = [IO.Path]::GetFullPath((Join-Path $testRoot $installSegment))
+$workspace = [IO.Path]::GetFullPath((Join-Path $testRoot $workspaceSegment))
 $appData = Join-Path $workspace '.claude-gui-v2'
 $copiedExecutable = Join-Path $installRoot ([IO.Path]::GetFileName($executablePath))
 $runtimePath = Join-Path $appData 'runtime-state.json'
@@ -85,6 +91,11 @@ $result = [ordered]@{
         requireNonDDrive = [bool]$RequireNonDDrive
         requireUnicodeUserProfile = [bool]$RequireUnicodeUserProfile
         full = [bool]$Full
+    }
+    paths = [ordered]@{
+        testRoot = $testRoot
+        installRoot = $installRoot
+        workspace = $workspace
     }
     checks = [ordered]@{}
 }

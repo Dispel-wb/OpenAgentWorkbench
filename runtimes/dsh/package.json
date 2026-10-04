@@ -25,5 +25,11 @@
     "@deepseek-ai/dsh-util-time": "^0.1.2-alpha.5",
     "@deepseek-ai/dsh-util-workspace-path": "^0.1.2-alpha.5",
     "@deepseek-ai/dsh-workflow": "^0.1.2-alpha.5"
+  },
+  "overrides": {
+    "fast-uri": "3.1.8",
+    "hono": "4.13.7",
+    "ip-address": "10.7.1",
+    "undici": "8.10.2"
   }
 }
