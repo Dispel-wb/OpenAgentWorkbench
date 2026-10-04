@@ -8,7 +8,13 @@ namespace ClaudeCodeWorkbench
         {
             Uri app;
             if (!Uri.TryCreate(baseUrl, UriKind.Absolute, out app)) return false;
-            if (SameOrigin(app, origin) || SameOrigin(app, referer)) return true;
+            var hasOrigin = !string.IsNullOrWhiteSpace(origin);
+            var hasReferer = !string.IsNullOrWhiteSpace(referer);
+            // Provenance headers must agree. Never let a same-origin signal or a
+            // second trusted header override an explicitly external value.
+            if (hasOrigin && !SameOrigin(app, origin)) return false;
+            if (hasReferer && !SameOrigin(app, referer)) return false;
+            if (hasOrigin || hasReferer) return true;
             return string.Equals((secFetchSite ?? "").Trim(), "same-origin", StringComparison.OrdinalIgnoreCase);
         }
 

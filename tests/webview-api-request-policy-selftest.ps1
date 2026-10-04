@@ -9,6 +9,10 @@ $cases=@(
   @{name='external origin';expected=$false;origin='https://example.invalid';referer='https://example.invalid/page';site='cross-site'},
   @{name='different loopback port';expected=$false;origin='http://127.0.0.1:43124';referer='';site='same-site'},
   @{name='opaque origin';expected=$false;origin='null';referer='';site='cross-site'},
+  @{name='external origin contradicts fetch signal';expected=$false;origin='https://example.invalid';referer='';site='same-origin'},
+  @{name='trusted origin with external referer';expected=$false;origin='http://127.0.0.1:43123';referer='https://example.invalid/page';site='same-origin'},
+  @{name='external origin with trusted referer';expected=$false;origin='https://example.invalid';referer='http://127.0.0.1:43123/page';site='same-origin'},
+  @{name='malformed explicit origin';expected=$false;origin='not a uri';referer='';site='same-origin'},
   @{name='missing browser provenance';expected=$false;origin='';referer='';site=''},
   @{name='host suffix spoof';expected=$false;origin='http://127.0.0.1.evil.invalid:43123';referer='';site='cross-site'}
 )

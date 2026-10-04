@@ -9,6 +9,22 @@ $ErrorActionPreference='Stop'
 $source=(Resolve-Path -LiteralPath $Executable).Path
 $targetRoot=(Resolve-Path -LiteralPath $InstallRoot).Path
 $target=Join-Path $targetRoot $TargetName
+function Assert-NoReparsePointInPath([string]$Leaf,[string]$Boundary){
+  $leafPath=[IO.Path]::GetFullPath($Leaf).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
+  $boundaryPath=[IO.Path]::GetFullPath($Boundary).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar)
+  if(-not [string]::Equals($leafPath,$boundaryPath,[StringComparison]::OrdinalIgnoreCase) -and
+     -not $leafPath.StartsWith($boundaryPath+[IO.Path]::DirectorySeparatorChar,[StringComparison]::OrdinalIgnoreCase)){
+    throw "Unsafe runtime path outside installation root: $leafPath"
+  }
+  $current=Get-Item -LiteralPath $leafPath -Force
+  while($true){
+    if(($current.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){ throw "Runtime path cannot contain a reparse point: $($current.FullName)" }
+    if([string]::Equals([IO.Path]::GetFullPath($current.FullName).TrimEnd([IO.Path]::DirectorySeparatorChar,[IO.Path]::AltDirectorySeparatorChar),$boundaryPath,[StringComparison]::OrdinalIgnoreCase)){ break }
+    $current=$current.Parent
+    if($null-eq$current){ throw "Runtime path escaped installation root: $leafPath" }
+  }
+}
+Assert-NoReparsePointInPath $targetRoot $targetRoot
 # Keep external agent runtimes on the same dependency lock as the executable source.
 # A lock marker avoids reinstalling thousands of files when nothing changed.
 if($WorkspaceRoot){
@@ -21,19 +37,25 @@ if($WorkspaceRoot){
     $lockSource=Join-Path $runtimeSource 'package-lock.json'
     $manifestSource=Join-Path $runtimeSource 'package.json'
     if(-not(Test-Path -LiteralPath $lockSource) -or -not(Test-Path -LiteralPath $manifestSource)){ throw "Missing locked runtime source: $runtimeSource" }
+    $runtimesTarget=Join-Path $targetRoot 'runtimes'
+    [IO.Directory]::CreateDirectory($runtimesTarget)|Out-Null
+    Assert-NoReparsePointInPath $runtimesTarget $targetRoot
     [IO.Directory]::CreateDirectory($runtimeTarget)|Out-Null
     $resolvedRuntimeTarget=(Resolve-Path -LiteralPath $runtimeTarget).Path
     $runtimeRoot=[IO.Path]::GetFullPath((Join-Path $targetRoot 'runtimes'))+[IO.Path]::DirectorySeparatorChar
     if(-not $resolvedRuntimeTarget.StartsWith($runtimeRoot,[StringComparison]::OrdinalIgnoreCase)){ throw "Unsafe runtime target: $resolvedRuntimeTarget" }
-    if(((Get-Item -LiteralPath $resolvedRuntimeTarget -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0){ throw "Runtime target cannot be a reparse point: $resolvedRuntimeTarget" }
+    Assert-NoReparsePointInPath $resolvedRuntimeTarget $targetRoot
     $lockHash=(Get-FileHash -LiteralPath $lockSource -Algorithm SHA256).Hash
     $marker=Join-Path $runtimeTarget '.workbench-lock.sha256'
     $installedHash=if(Test-Path -LiteralPath $marker){(Get-Content -LiteralPath $marker -Raw).Trim()}else{''}
     if($installedHash -ne $lockHash){
+      Assert-NoReparsePointInPath $resolvedRuntimeTarget $targetRoot
       Copy-Item -LiteralPath $manifestSource -Destination (Join-Path $runtimeTarget 'package.json') -Force
       Copy-Item -LiteralPath $lockSource -Destination (Join-Path $runtimeTarget 'package-lock.json') -Force
+      Assert-NoReparsePointInPath $resolvedRuntimeTarget $targetRoot
       & $npm.Source ci --omit=dev --ignore-scripts --no-audit --no-fund --prefix $runtimeTarget
       if($LASTEXITCODE -ne 0){ throw "Failed to synchronize $runtimeName runtime" }
+      Assert-NoReparsePointInPath $resolvedRuntimeTarget $targetRoot
       [IO.File]::WriteAllText($marker,$lockHash+[Environment]::NewLine,[Text.UTF8Encoding]::new($false))
     }
   }
