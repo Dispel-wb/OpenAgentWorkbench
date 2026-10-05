@@ -4,7 +4,7 @@ Open Agent Workbench 是一个面向 Windows 10/11 的中文 Agent 桌面工作�
 
 当前公开版本为 **v1.0.0**。2026-09-30 至 2026-10-03，先前固定候选完成四内核并行 72 小时验证：有效运行 259,211 秒，Claude、Codex、DSHarness、Pi 各 831 轮通过，失败数为 0，全部冻结输入在结束后复核一致。后续安全依赖与无障碍改进改变了 EXE 摘要，因此该长期结果不能作为新构建的认证证据。新构建必须按最终 SHA-256 重新完成长期与外部认证门禁。详细边界见 [v1.0.0 发布验收](docs/V1_RELEASE_READINESS.md) 和 [1.0.0 认证状态](docs/CERTIFICATION_STATUS_1.0.0.md)。
 
-程序尚未进行商业代码签名。请只从本仓库的 Releases 下载，并核对发布页列出的 SHA-256；Windows 可能显示未知发布者提示。
+当前构建在 SignPath 开源项目审核通过前仍未签名。请只从本仓库的 Releases 下载，并核对发布页列出的 SHA-256；Windows 可能显示未知发布者提示。
 
 ## 已具备的核心能力
 
@@ -19,10 +19,10 @@ Open Agent Workbench 是一个面向 Windows 10/11 的中文 Agent 桌面工作�
 ## v1.0.0 的边界
 
 - 仅提供 Windows x64 构建；需要 Microsoft Edge WebView2 Runtime。
-- 发布的 EXE 未签名，Windows 可能显示未知发布者提示。
+- 当前 EXE 在 SignPath 开源项目审核通过前未签名，Windows 可能显示未知发布者提示。
 - PDF 支持内嵌只读预览；DOCX/XLSX/PPTX 支持简化只读预览，DOCX/PPTX 可显示包内 PNG/JPEG。复杂图表、精确分页和文档编辑仍需系统应用。
 - 服务商兼容性依赖其 OpenAI/Anthropic 兼容程度；不同中转服务的流式字段仍可能需要适配。
-- 先前候选已完成四内核本机 72 小时稳定性验证；当前安全与无障碍改进构建需要按新摘要重跑。干净 Win10/Win11 独立环境矩阵、Narrator/NVDA 人工验收、独立安全复核、商业证书签名和第三方真实云端服务兼容性仍未完成。
+- 先前候选已完成四内核本机 72 小时稳定性验证；最终签名候选仍需按新摘要重跑。干净 Win10/Win11 独立环境矩阵、Narrator/NVDA 人工验收、独立安全复核、开源项目代码签名和第三方真实云端服务兼容性以认证状态文档为准。
 
 逐项差距、验收条件与最新修复见 [成熟度清单](docs/MATURITY_GAPS.md) 和 [验证状态](docs/VALIDATION_STATUS.md)。
 
@@ -54,6 +54,14 @@ python -m pip install Pillow==12.3.0
 - 诊断包会尝试脱敏，但分享前仍应人工检查路径、机器名和任务摘要。
 
 请勿提交真实 API Key、工作区文件、运行数据库、日志或诊断包。安全问题请通过 GitHub Security Advisory 私下报告。
+
+完整的数据处理边界见[隐私政策](PRIVACY.md)。
+
+## Code signing policy
+
+签名候选必须由 GitHub 托管环境从公开提交构建，经过完整测试后提交人工审批；签名完成后还要按签名文件的新 SHA-256 重新执行发布门禁。详见[代码签名政策](CODE_SIGNING_POLICY.md)。
+
+Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 
 ## 品牌与项目关系
 

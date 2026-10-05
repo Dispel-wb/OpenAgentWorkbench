@@ -38,7 +38,7 @@ function Copy-PublicFile {
     [IO.File]::WriteAllText($to, $content, [Text.UTF8Encoding]::new($false))
 }
 
-foreach ($file in @('.gitignore','LICENSE','README.md','SECURITY.md','THIRD_PARTY_NOTICES.md','CONTRIBUTING.md','CODE_OF_CONDUCT.md','CHANGELOG.md','GOVERNANCE.md','build_exe.ps1','package_open_source.ps1','restore_build_dependencies.ps1','sync_local_version.ps1','install_dsh_runtime.ps1','runtimes\dsh\package.json','runtimes\dsh\package-lock.json')) {
+foreach ($file in @('.gitignore','LICENSE','README.md','SECURITY.md','CODE_SIGNING_POLICY.md','PRIVACY.md','THIRD_PARTY_NOTICES.md','CONTRIBUTING.md','CODE_OF_CONDUCT.md','CHANGELOG.md','GOVERNANCE.md','build_exe.ps1','package_open_source.ps1','restore_build_dependencies.ps1','sync_local_version.ps1','install_dsh_runtime.ps1','runtimes\dsh\package.json','runtimes\dsh\package-lock.json')) {
     Copy-PublicFile $file
 }
 Copy-PublicFile '.gitattributes'
@@ -74,7 +74,7 @@ Get-ChildItem -LiteralPath (Join-Path $resolvedSource 'tests') -File | Where-Obj
     $_.Extension -in @('.ps1','.js','.cs','.md') -and $_.Name -notmatch '(?i)(result|debug|runner-error|stdout|stderr)'
 } | ForEach-Object { Copy-PublicFile (Join-Path 'tests' $_.Name) }
 
-foreach ($document in @('THREAT_MODEL.md','AGENT_WORKER_SDK.md','ARCHITECTURE.md','DEVELOPMENT.md','DATA_MODEL.md','BUILD_REPRODUCIBILITY.md','WINDOWS_TEST_MATRIX.md','RELEASE_PROCESS.md','CERTIFICATION_STATUS_1.0.0.md','ACCESSIBILITY_CERTIFICATION_1.0.0.md','INDEPENDENT_SECURITY_REVIEW_1.0.0.md','VALIDATION_STATUS.md','VALIDATION_6.4.24.md','VALIDATION_PREVIEW_CANCELLATION.md','MATURITY_GAPS.md','FRONTEND_ORIGIN.md','V1_RELEASE_READINESS.md','V1_0_0_SOAK_EVIDENCE.json')) {
+foreach ($document in @('THREAT_MODEL.md','AGENT_WORKER_SDK.md','ARCHITECTURE.md','DEVELOPMENT.md','DATA_MODEL.md','BUILD_REPRODUCIBILITY.md','WINDOWS_TEST_MATRIX.md','RELEASE_PROCESS.md','SIGNPATH_APPLICATION.md','CERTIFICATION_STATUS_1.0.0.md','ACCESSIBILITY_CERTIFICATION_1.0.0.md','INDEPENDENT_SECURITY_REVIEW_1.0.0.md','VALIDATION_STATUS.md','VALIDATION_6.4.24.md','VALIDATION_PREVIEW_CANCELLATION.md','MATURITY_GAPS.md','FRONTEND_ORIGIN.md','V1_RELEASE_READINESS.md','V1_0_0_SOAK_EVIDENCE.json')) {
     Copy-PublicFile (Join-Path 'docs' $document)
 }
 
@@ -94,4 +94,3 @@ $manifestPath = Join-Path $destinationPath 'PUBLIC_RELEASE_MANIFEST.json'
 [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 5), [Text.UTF8Encoding]::new($false))
 
 Write-Output $destinationPath
-

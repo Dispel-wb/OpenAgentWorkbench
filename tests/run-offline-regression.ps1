@@ -41,7 +41,7 @@ foreach($name in $hostTests){
     Add-Case $name "$name.ps1" $hostArguments
 }
 foreach($name in @('product-gaps-selftest','webview-runtime-selftest','sdk-frame-reader-selftest','durable-process-identity-selftest')){Add-Case $name "$name.ps1" @('-DependencyRoot',$DependencyRoot) $false}
-foreach($name in @('release-ci-gate-selftest','release-signature-policy-selftest','v1-readiness-selftest')){Add-Case $name "$name.ps1" @() $false}
+foreach($name in @('release-ci-gate-selftest','release-signature-policy-selftest','signing-policy-selftest','v1-readiness-selftest')){Add-Case $name "$name.ps1" @() $false}
 Add-Case 'webview-api-request-policy-selftest' 'webview-api-request-policy-selftest.ps1' @() $false
 Add-Case 'sync-local-runtime-path-selftest' 'sync-local-runtime-path-selftest.ps1' @() $false
 Add-Case 'agent-worker-sdk-integration' 'agent-worker-sdk-integration.ps1' @('-DependencyRoot',$DependencyRoot)

@@ -57,6 +57,7 @@ jobs:
           .\tests\dsh-worker-sdk-integration.ps1 -Executable $exe -NodePath $node
           .\tests\sdk-frame-reader-selftest.ps1 -DependencyRoot .\.packages
           .\tests\release-signature-policy-selftest.ps1
+          .\tests\signing-policy-selftest.ps1
           .\tests\release-ci-gate-selftest.ps1
           .\tests\v1-readiness-selftest.ps1
           .\tests\host-startup-failure-selftest.ps1 -Executable $exe

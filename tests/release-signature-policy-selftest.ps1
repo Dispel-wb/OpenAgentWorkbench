@@ -3,7 +3,7 @@ $scratch=Join-Path ([IO.Path]::GetTempPath()) ('signature-gate-'+[guid]::NewGuid
 $audit=Join-Path $PSScriptRoot 'release-security-audit.ps1'
 [IO.Directory]::CreateDirectory($scratch)|Out-Null
 try {
-    foreach($relative in @('LICENSE','SECURITY.md','THIRD_PARTY_NOTICES.md','build/dependencies.lock.json','docs/THREAT_MODEL.md','candidate.exe')) {
+    foreach($relative in @('LICENSE','SECURITY.md','CODE_SIGNING_POLICY.md','PRIVACY.md','THIRD_PARTY_NOTICES.md','build/dependencies.lock.json','docs/THREAT_MODEL.md','candidate.exe')) {
         $file=Join-Path $scratch $relative
         [IO.Directory]::CreateDirectory((Split-Path $file -Parent))|Out-Null
         [IO.File]::WriteAllText($file,'fixture')
