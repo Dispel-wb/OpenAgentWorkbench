@@ -2,7 +2,7 @@
   "name": "workbench-pi-runtime",
   "private": true,
   "version": "1.0.0",
-  "dependencies": { "@earendil-works/pi-coding-agent": "1.0.1" },
+  "dependencies": { "@earendil-works/pi-coding-agent": "1.0.2" },
   "overrides": {
     "brace-expansion": "5.0.12",
     "undici": "8.10.2"
