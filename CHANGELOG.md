@@ -5,6 +5,7 @@
 - Added a Microsoft Store MSIX build path with full-trust desktop and startup-task declarations. Store mode disables portable self-install, Run-key registration, and in-place EXE replacement so Microsoft can own installation and updates.
 - Added GitHub artifact attestations and Sigstore keyless bundles for the portable EXE. These prove build origin and integrity but are explicitly not represented as Windows Authenticode trust.
 - Recorded the SignPath Foundation rejection accurately and retained its candidate workflow only for a possible future reapplication after the project has stronger public reputation signals.
+- Updated four DSHarness transitive dependency overrides after new npm advisories for the MCP SDK, compression, proxy address parsing, and Sharp; the production dependency audit returns zero known vulnerabilities and all DSH transport tests still pass.
 - Updated the optional Pi runtime to 1.0.1, preserving the verified `agent_settled` RPC contract while removing known high-severity transitive dependency alerts.
 - Added live-region and disclosure semantics for screen readers, a two-reader manual certification checklist, and an external security-review scope. These improvements require certification evidence tied to the new EXE hash.
 - Made the clean-Windows matrix compatible with both Windows PowerShell 5.1 and PowerShell 7 when exercising Unicode paths.

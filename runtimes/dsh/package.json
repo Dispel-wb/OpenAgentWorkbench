@@ -27,9 +27,13 @@
     "@deepseek-ai/dsh-workflow": "^0.1.2-alpha.5"
   },
   "overrides": {
+    "@modelcontextprotocol/sdk": "1.31.0",
+    "compression": "1.8.2",
     "fast-uri": "3.1.8",
     "hono": "4.13.7",
     "ip-address": "10.7.1",
+    "proxy-addr": "2.0.8",
+    "sharp": "0.35.5",
     "undici": "8.10.2"
   }
 }
