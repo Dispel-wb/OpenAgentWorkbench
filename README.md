@@ -4,7 +4,7 @@ Open Agent Workbench 是一个面向 Windows 10/11 的中文 Agent 桌面工作�
 
 当前公开版本为 **v1.0.0**。2026-09-30 至 2026-10-03，先前固定候选完成四内核并行 72 小时验证：有效运行 259,211 秒，Claude、Codex、DSHarness、Pi 各 831 轮通过，失败数为 0，全部冻结输入在结束后复核一致。后续安全依赖与无障碍改进改变了 EXE 摘要，因此该长期结果不能作为新构建的认证证据。新构建必须按最终 SHA-256 重新完成长期与外部认证门禁。详细边界见 [v1.0.0 发布验收](docs/V1_RELEASE_READINESS.md) 和 [1.0.0 认证状态](docs/CERTIFICATION_STATUS_1.0.0.md)。
 
-当前构建在 SignPath 开源项目审核通过前仍未签名。请只从本仓库的 Releases 下载，并核对发布页列出的 SHA-256；Windows 可能显示未知发布者提示。
+SignPath Foundation 因项目尚缺少足够的公开采用与独立声誉信号，暂未批准免费 Authenticode 证书。便携 EXE 将提供 GitHub 构建证明与 Sigstore 无密钥签名包，供用户验证来源和完整性；它们不会消除 Windows 的“未知发布者”提示。Microsoft Store 版由商店认证后签名、安装和更新。请只从本仓库的 Releases 或 Microsoft Store 下载。
 
 ## 已具备的核心能力
 
@@ -19,10 +19,10 @@ Open Agent Workbench 是一个面向 Windows 10/11 的中文 Agent 桌面工作�
 ## v1.0.0 的边界
 
 - 仅提供 Windows x64 构建；需要 Microsoft Edge WebView2 Runtime。
-- 当前 EXE 在 SignPath 开源项目审核通过前未签名，Windows 可能显示未知发布者提示。
+- 便携 EXE 当前没有 Authenticode 发布者证书，Windows 可能显示未知发布者提示；可用 GitHub attestation 与 Sigstore bundle 验证来源。Microsoft Store 包只有通过商店认证后才会获得微软签名。
 - PDF 支持内嵌只读预览；DOCX/XLSX/PPTX 支持简化只读预览，DOCX/PPTX 可显示包内 PNG/JPEG。复杂图表、精确分页和文档编辑仍需系统应用。
 - 服务商兼容性依赖其 OpenAI/Anthropic 兼容程度；不同中转服务的流式字段仍可能需要适配。
-- 先前候选已完成四内核本机 72 小时稳定性验证；最终签名候选仍需按新摘要重跑。干净 Win10/Win11 独立环境矩阵、Narrator/NVDA 人工验收、独立安全复核、开源项目代码签名和第三方真实云端服务兼容性以认证状态文档为准。
+- 先前候选已完成四内核本机 72 小时稳定性验证；新的最终发行候选仍需按新摘要重跑。干净 Win10/Win11 独立环境矩阵、Narrator/NVDA 人工验收、独立安全复核、Microsoft Store 认证和第三方真实云端服务兼容性以认证状态文档为准。
 
 逐项差距、验收条件与最新修复见 [成熟度清单](docs/MATURITY_GAPS.md) 和 [验证状态](docs/VALIDATION_STATUS.md)。
 
@@ -44,6 +44,8 @@ python -m pip install Pillow==12.3.0
 
 构建依赖按锁定版本与 SHA-256 恢复，不强制安装 Visual Studio。输出位于 `dist\opensource\OpenAgentWorkbench.exe`。详见 [开发指南](docs/DEVELOPMENT.md)、[可复现构建](docs/BUILD_REPRODUCIBILITY.md)、[Windows 测试矩阵](docs/WINDOWS_TEST_MATRIX.md)。
 
+Microsoft Store 的 MSIX 构建和 Partner Center 身份配置见 [Microsoft Store 打包](docs/MICROSOFT_STORE.md)。便携 EXE 的来源验证见 [构建证明验证](docs/PROVENANCE.md)。
+
 ## 数据与安全
 
 - 默认工作区：`D:\work\OpenAgent`
@@ -59,9 +61,7 @@ python -m pip install Pillow==12.3.0
 
 ## Code signing policy
 
-签名候选必须由 GitHub 托管环境从公开提交构建，经过完整测试后提交人工审批；签名完成后还要按签名文件的新 SHA-256 重新执行发布门禁。详见[代码签名政策](CODE_SIGNING_POLICY.md)。
-
-Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+候选必须由 GitHub 托管环境从公开提交构建并完成发布门禁。便携 EXE 使用 GitHub 构建证明和 Sigstore 无密钥来源证明；Microsoft Store 包在商店认证后由微软签名。任何最终分发文件都要按其最终 SHA-256 重跑适用的发布门禁。详见[代码签名政策](CODE_SIGNING_POLICY.md)。
 
 ## 品牌与项目关系
 

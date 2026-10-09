@@ -26,7 +26,7 @@
 
 ## 剩余风险
 
-- 未取得代码签名证书前，Windows 无法验证发行者身份；发布包只能校验 SHA-256。
+- 便携 EXE 没有 Authenticode 发布者证书；GitHub attestation、Sigstore bundle 和 SHA-256 可以验证来源与完整性，但不会消除 Windows 未知发布者提示。Store 包只有通过 Microsoft 认证后才获得受信任签名。
 - full 权限是显式逃生舱，会绕过部分审批，不应作为默认模式。
 - Provider 对模型能力的声明可能错误；视觉/生图能力应以实际探测证据为准。
 - 用户批准任意命令后，命令本身仍可访问该用户账户能够访问的资源。

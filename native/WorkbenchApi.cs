@@ -1605,7 +1605,9 @@ namespace ClaudeCodeWorkbench
         {
             var config = JsonUtil.Read(UpdateChannelFile, new JObject { ["channel"] = "stable", ["manifestUrl"] = "", ["allowUnsignedPreview"] = false }) as JObject ?? new JObject();
             config["currentVersion"] = Program.AppContractVersion;
-            config["atomicUpdater"] = true;
+            config["atomicUpdater"] = !PackageIdentity.IsPackaged;
+            config["storeManagedUpdates"] = PackageIdentity.IsPackaged;
+            if (PackageIdentity.IsPackaged) config["message"] = "Microsoft Store 版本由商店安全更新";
             config["activeTerminalBlockers"] = ActiveTerminalBlockerCount();
             var currentExecutable = Process.GetCurrentProcess().MainModule.FileName;
             config["previousExecutable"] = Path.Combine(Path.GetDirectoryName(currentExecutable), Path.GetFileNameWithoutExtension(currentExecutable) + ".previous.exe");
@@ -1615,6 +1617,7 @@ namespace ClaudeCodeWorkbench
 
         private JObject SaveUpdateConfig(JObject body)
         {
+            if (PackageIdentity.IsPackaged) throw new InvalidOperationException("Microsoft Store 版本由商店管理更新通道");
             var channel = ((string)body["channel"] ?? "stable").Trim().ToLowerInvariant();
             if (channel != "stable" && channel != "preview") throw new InvalidOperationException("更新通道仅支持 stable 或 preview");
             var manifestUrl = ((string)body["manifestUrl"] ?? "").Trim();
@@ -1626,6 +1629,7 @@ namespace ClaudeCodeWorkbench
 
         private async Task<JObject> CheckUpdate()
         {
+            if (PackageIdentity.IsPackaged) return new JObject { ["configured"] = true, ["available"] = false, ["storeManagedUpdates"] = true, ["currentVersion"] = Program.AppContractVersion, ["message"] = "Microsoft Store 版本由商店安全更新" };
             var config = UpdateStatus(); var manifestUrl = (string)config["manifestUrl"] ?? "";
             if (manifestUrl.Length == 0) return new JObject { ["configured"] = false, ["channel"] = config["channel"], ["currentVersion"] = Program.AppContractVersion, ["message"] = "尚未配置 HTTPS 发布清单" };
             ValidateHttpsUrl(manifestUrl, "更新清单");
@@ -1639,6 +1643,7 @@ namespace ClaudeCodeWorkbench
 
         private async Task<JObject> StageUpdate(JObject body)
         {
+            if (PackageIdentity.IsPackaged) throw new InvalidOperationException("Microsoft Store 版本不能替换包内 EXE，请从商店更新");
             var config = UpdateStatus(); var release = body["release"] as JObject ?? throw new InvalidOperationException("缺少 release 清单");
             ValidateReleaseManifest(release, (string)config["channel"]);
             var version = (string)release["version"]; var url = (string)release["url"]; var expected = ((string)release["sha256"] ?? "").Replace("-", "").ToUpperInvariant();
@@ -1660,6 +1665,7 @@ namespace ClaudeCodeWorkbench
 
         private JObject BeginApplyUpdate(JObject body)
         {
+            if (PackageIdentity.IsPackaged) throw new InvalidOperationException("Microsoft Store 版本不能替换包内 EXE，请从商店更新");
             var staged = Path.GetFullPath(((string)body["path"] ?? "").Trim());
             var expected = ((string)body["sha256"] ?? "").Replace("-", "").Trim().ToUpperInvariant();
             var updatesRoot = Path.GetFullPath(Path.Combine(AppPaths.Data, "updates")).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
@@ -2199,7 +2205,6 @@ namespace ClaudeCodeWorkbench
         }
     }
 }
-
 
 
 

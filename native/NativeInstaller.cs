@@ -17,6 +17,7 @@ namespace ClaudeCodeWorkbench
 
         public static int Install(string requestedTarget)
         {
+            if (PackageIdentity.IsPackaged) return 84;
             try
             {
                 var target = InstallTarget(requestedTarget); Directory.CreateDirectory(target);
@@ -46,6 +47,7 @@ namespace ClaudeCodeWorkbench
 
         public static int BeginUninstall(string requestedTarget)
         {
+            if (PackageIdentity.IsPackaged) return 84;
             try
             {
                 NativeHostWatchdog.SignalStop();
@@ -61,6 +63,7 @@ namespace ClaudeCodeWorkbench
 
         public static int FinishUninstall(string target, int parentPid)
         {
+            if (PackageIdentity.IsPackaged) return 84;
             try
             {
                 VerifyInstallTarget(target);

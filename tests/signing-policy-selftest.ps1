@@ -4,10 +4,11 @@ $policy = Get-Content -LiteralPath (Join-Path $root 'CODE_SIGNING_POLICY.md') -R
 $privacy = Get-Content -LiteralPath (Join-Path $root 'PRIVACY.md') -Raw
 $readme = Get-Content -LiteralPath (Join-Path $root 'README.md') -Raw
 $workflow = Get-Content -LiteralPath (Join-Path $root '.github\workflows\signpath-candidate.yml') -Raw
+$provenance = Get-Content -LiteralPath (Join-Path $root '.github\workflows\provenance.yml') -Raw
 
 foreach ($required in @(
-    'Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).',
-    'Author and maintainer:', 'Reviewer:', 'Signing approver:', 'multifactor authentication', 'manual approval'
+    'GitHub artifact attestation', 'Sigstore keyless bundle', 'not Authenticode signatures',
+    'Microsoft Store MSIX', 'SignPath declined the application', 'final SHA-256'
 )) {
     if (-not $policy.Contains($required)) { throw "Signing policy is missing: $required" }
 }
@@ -22,4 +23,8 @@ foreach ($required in @(
     if (-not $workflow.Contains($required)) { throw "Signing workflow is missing: $required" }
 }
 if ($workflow -match '(?im)^\s*(gh\s+release|softprops/action-gh-release|actions/create-release)') { throw 'Signing workflow must not publish a release' }
-Write-Output 'Signing policy and candidate workflow contract passed'
+foreach ($required in @('id-token: write','attestations: write','actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8','cosign sign-blob','cosign verify-blob')) {
+    if (-not $provenance.Contains($required)) { throw "Provenance workflow is missing: $required" }
+}
+if ($provenance -match '(?im)^\s*(gh\s+release|softprops/action-gh-release|actions/create-release)') { throw 'Provenance workflow must not publish a release' }
+Write-Output 'Signing, provenance, and dormant SignPath workflow contracts passed'

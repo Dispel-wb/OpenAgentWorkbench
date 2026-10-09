@@ -23,6 +23,13 @@ namespace ClaudeCodeWorkbench
 
         public static JObject Status()
         {
+            if (PackageIdentity.IsPackaged) return new JObject
+            {
+                ["enabled"] = false, ["registered"] = false, ["supported"] = false,
+                ["scope"] = "microsoft-store", ["launchMode"] = "windows-startup-settings",
+                ["currentExecutable"] = CurrentExecutable(), ["registeredExecutable"] = "",
+                ["message"] = "Microsoft Store 版本的登录启动由 Windows 启动应用设置管理"
+            };
             var current = CurrentExecutable();
             var command = "";
             using (var key = Registry.CurrentUser.OpenSubKey(RegistryPath, false)) command = Convert.ToString(key == null ? null : key.GetValue(ValueName, ""));
@@ -41,6 +48,7 @@ namespace ClaudeCodeWorkbench
 
         public static JObject SetEnabled(bool enabled)
         {
+            if (PackageIdentity.IsPackaged) throw new InvalidOperationException("Microsoft Store 版本的登录启动由 Windows 启动应用设置管理");
             if (enabled)
             {
                 using (var key = Registry.CurrentUser.CreateSubKey(RegistryPath))
@@ -58,6 +66,7 @@ namespace ClaudeCodeWorkbench
 
         public static void ReconcileExisting()
         {
+            if (PackageIdentity.IsPackaged) return;
             var status = Status();
             if ((bool?)status["enabled"] == true && (bool?)status["registered"] != true) SetEnabled(true);
         }

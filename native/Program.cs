@@ -120,6 +120,14 @@ namespace ClaudeCodeWorkbench
             {
                 Environment.ExitCode = MutexScopeSelfTest(); return;
             }
+            if (args != null && args.Length >= 1 && string.Equals(args[0], "--package-mode-selftest", StringComparison.OrdinalIgnoreCase))
+            {
+                Environment.ExitCode = !PackageIdentity.IsPackaged && PackageIdentity.IsPackagedResult(122, 32) && !PackageIdentity.IsPackagedResult(15700, 0) ? 0 : 36; return;
+            }
+            if (args != null && args.Length >= 1 && string.Equals(args[0], "--package-runtime-selftest", StringComparison.OrdinalIgnoreCase))
+            {
+                Environment.ExitCode = PackageIdentity.IsPackaged ? 0 : 37; return;
+            }
             if (args != null && args.Length >= 1 && string.Equals(args[0], "--install", StringComparison.OrdinalIgnoreCase))
             {
                 AppPaths.Initialize(); Environment.ExitCode = NativeInstaller.Install(args.Length >= 2 ? args[1] : null); return;

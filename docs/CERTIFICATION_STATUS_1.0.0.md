@@ -11,6 +11,7 @@
 | 读屏认证 | 未完成 | Narrator 与 NVDA 对最终候选完成实际朗读验收 |
 | 独立安全复核 | 未完成 | 外部复核者签署，同一候选未解决高危/严重问题为 0 |
 | 72 小时四内核 | 需最终摘要 | 有效运行至少 259200 秒，Claude/Codex/DSH/Pi 实际负载失败 0 |
+| 便携 EXE 来源证明 | 工作流已实现，远程证明待生成 | GitHub attestation 与 Sigstore bundle 均验证最终 SHA-256；不宣称 Authenticode |
+| Microsoft Store | 本地 MSIX 构建通过，认证未完成 | Partner Center 精确身份、WACK/商店认证、微软签名后的最终包复核 |
 
 发行流程会在任何必需报告缺失、摘要不匹配或报告未签署时拒绝 1.0.0。不得把本地自测、短期运行或维护者自审描述为第三方认证。
-

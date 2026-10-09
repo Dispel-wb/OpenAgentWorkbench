@@ -1,37 +1,36 @@
-# Code signing policy
+# Code signing and provenance policy
 
-Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
+Open Agent Workbench uses separate trust mechanisms for its two Windows distribution formats.
 
-## Scope
+## Portable EXE
 
-Only the Windows x64 `OpenAgentWorkbench.exe` built from this public repository may be signed. A signing request must originate from the GitHub hosted workflow in `.github/workflows/signpath-candidate.yml`, refer to an immutable commit, and use the uploaded GitHub Actions artifact produced by that same run. The artifact configuration is a ZIP whose only signable product is `OpenAgentWorkbench.exe`.
+The portable `OpenAgentWorkbench.exe` is built on a GitHub-hosted Windows runner from a public immutable commit. The provenance workflow runs the full offline regression and release security audit before it creates:
 
-Signing never covers user data, configuration, logs, downloaded extensions, bundled upstream binaries, or locally rebuilt executables. A valid signature proves the publisher and artifact integrity; it does not replace security review or runtime permission controls.
+- a GitHub artifact attestation;
+- a Sigstore keyless bundle tied to the repository, workflow path, and Git ref;
+- a SHA-256 checksum file.
 
-## Roles and approval
+These records prove artifact origin and integrity. They are not Authenticode signatures and do not establish a Windows publisher identity. Windows may still show an unknown-publisher warning.
 
-The current project team is:
+## Microsoft Store MSIX
 
-- Author and maintainer: [Dispel-wb](https://github.com/Dispel-wb)
-- Reviewer: [Dispel-wb](https://github.com/Dispel-wb)
-- Signing approver: [Dispel-wb](https://github.com/Dispel-wb)
+The Store package uses the exact identity values assigned by Partner Center. The local build is unsigned and is uploaded only for Store certification. Microsoft signs the accepted MSIX and manages its installation, update, and uninstall. The Store signature covers the certified package; it does not sign a separately downloaded portable EXE.
 
-Repository and SignPath accounts used for signing must have multifactor authentication enabled. Each release signing request requires manual approval after the commit, test evidence, unsigned SHA-256, and requested version have been reviewed. The API token is stored only as a GitHub Actions secret. Project identifiers are stored as repository variables.
+## SignPath status
 
-## Release procedure
+The project applied to the free SignPath Foundation program in October 2026. SignPath declined the application because the project did not yet show enough public adoption, independent references, sustained engagement, or institutional backing. The existing SignPath candidate workflow remains dormant for a future reapplication and must not be described as an active signing service.
 
-1. Build on a GitHub hosted Windows runner from locked dependencies.
-2. Verify reproducibility, run the full offline regression suite, and run the release security audit.
-3. Upload the unsigned executable as an immutable workflow artifact.
-4. Submit that artifact to SignPath and manually approve the request.
-5. Verify Authenticode, product metadata, the signed SHA-256, and the exact signing request.
-6. Repeat clean Windows, accessibility, independent security, and 72 hour four core validation against the signed SHA-256 before promotion.
-7. Publish the already verified signed artifact without rebuilding it.
+## Release controls
 
-The signing workflow creates a candidate artifact only. It cannot create or modify a GitHub Release.
+1. Build from locked dependencies on a GitHub-hosted Windows runner.
+2. Verify reproducibility, run the full offline regression, and run the release security audit.
+3. Create provenance for the exact portable EXE or submit the exact MSIX to Partner Center.
+4. Record the final SHA-256 and verification result.
+5. Repeat clean Windows, accessibility, independent security, and 72-hour four-core validation against the final promoted SHA-256.
+6. Publish the already verified artifact without rebuilding it.
 
-## Incident response
+The provenance workflow cannot create or modify a GitHub Release. Store submission and release promotion require explicit maintainer action.
 
-If a signing credential, account, workflow, or released binary may be compromised, maintainers stop signing and distribution, preserve the affected hashes and logs, notify SignPath, request certificate revocation when appropriate, and publish a security advisory. A replacement build receives a new version and repeats every release gate.
+If a workflow identity, repository, account, or released binary may be compromised, maintainers stop distribution, preserve the affected hashes and logs, revoke or remove affected artifacts when possible, and publish a security advisory.
 
-See the [privacy policy](PRIVACY.md), [security policy](SECURITY.md), and [release process](docs/RELEASE_PROCESS.md).
+See the [provenance guide](docs/PROVENANCE.md), [Microsoft Store guide](docs/MICROSOFT_STORE.md), [privacy policy](PRIVACY.md), [security policy](SECURITY.md), and [release process](docs/RELEASE_PROCESS.md).

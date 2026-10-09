@@ -5,7 +5,7 @@
 3. 在干净目录恢复依赖，构建 OpenSource EXE，执行 CI 离线回归、安全扫描、可复现构建。
 4. 检查差异和许可证；确认没有 token、个人路径、外部产品角色图像。安全扫描是自动化门禁，不是完整人工安全审计。
 5. 先推送候选 commit。CI 实际成功后才创建匹配的 `v<version>` 标签。Release workflow 构建 ZIP、SHA256SUMS 和门禁证据。
-6. 未通过干净系统矩阵、长期稳定性和安全复核，不发布正式版 1.0.0。自签证书不能证明公众信任；没有可信签名时明确 unsigned，不要求用户关闭系统保护。
+6. 未通过干净系统矩阵、长期稳定性和安全复核，不发布正式版 1.0.0。便携 EXE 附带 GitHub/Sigstore 来源证明并明确没有 Authenticode；Store MSIX 使用 Partner Center 分配的身份，认证通过后由 Microsoft 签名。自签证书只用于受控本地测试，不能作为公众信任。
 
 GitHub Actions 的实际状态以仓库 Actions 为准。本地 YAML 解析成功不等于远程 CI 成功。手动 workflow_dispatch 只生成待审查构建产物；标签推送才发布 GitHub Release。
 

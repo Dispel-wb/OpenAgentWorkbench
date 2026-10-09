@@ -41,7 +41,7 @@ foreach ($file in $files | Where-Object { $textExtensions -contains $_.Extension
     }
 }
 
-foreach ($required in @('LICENSE','SECURITY.md','CODE_SIGNING_POLICY.md','PRIVACY.md','THIRD_PARTY_NOTICES.md','build\dependencies.lock.json','docs\THREAT_MODEL.md')) {
+foreach ($required in @('LICENSE','SECURITY.md','CODE_SIGNING_POLICY.md','PRIVACY.md','THIRD_PARTY_NOTICES.md','build\dependencies.lock.json','docs\THREAT_MODEL.md','docs\PROVENANCE.md','docs\MICROSOFT_STORE.md','.github\workflows\provenance.yml')) {
     if (-not (Test-Path -LiteralPath (Join-Path $sourceRoot $required))) { $failures.Add("Required release file missing: $required") }
 }
 
