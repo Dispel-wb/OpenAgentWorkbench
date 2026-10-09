@@ -23,7 +23,7 @@
     "@deepseek-ai/dsh-spill": "^0.1.2-alpha.5",
     "@deepseek-ai/dsh-subagent-in-process-driver": "^0.1.2-alpha.5",
     "@deepseek-ai/dsh-util-time": "^0.1.2-alpha.5",
-    "@deepseek-ai/dsh-util-workspace-path": "^0.1.2-alpha.5",
+    "@deepseek-ai/dsh-util-workspace-path": "^0.2.0-rc.2",
     "@deepseek-ai/dsh-workflow": "^0.1.2-alpha.5"
   },
   "overrides": {
